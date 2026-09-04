@@ -1,0 +1,2 @@
+# DeepClip
+CLIP for deepfakes
