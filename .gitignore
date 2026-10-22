@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Model weights (downloaded automatically from the GitHub release)
+yolov8n-face.pt
+shape_predictor_68_face_landmarks.dat
