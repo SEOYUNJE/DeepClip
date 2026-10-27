@@ -28,12 +28,17 @@ COLUMNS = (
 BOOL_COLUMNS = [col for col in COLUMNS if col.endswith("_forged") or col.endswith("_flag")]
 FLOAT_COLUMNS = [col for col in COLUMNS if col not in ID_COLUMNS and col not in BOOL_COLUMNS]
 
+FLAG_FIELDS = [field for field in FEATURE_FIELDS if field.endswith("_flag")]
+METADATA_NAME = "train_clip_frame_metadata.csv"
+
 def process_frame(row: dict, root_path: Path, save_masks: bool) -> dict:
     """
     Analyzes one FAKE frame and returns one row of raw_annotation.parquet.
+    Only the frames with status "ok" are saved to the parquet file and have a forgery mask.
 
     status:
-        ok: at least one region is forged
+        ok: at least one region is forged and at least one forgery flag of the forged regions is on
+        no_flag: at least one region is forged, but no forgery flag is on
         no_forged_region: no region is forged
         no_landmark: crop exists, but its landmark file does not
         no_pair: fake or real crop image does not exist
@@ -68,13 +73,23 @@ def process_frame(row: dict, root_path: Path, save_masks: bool) -> dict:
             real_image = cv2.resize(real_image, (fake_image.shape[1], fake_image.shape[0]))
 
         forgery_mask = compute_forgery_mask(real_image, fake_image)
+        analysis = analyze_frame(real_image, fake_image, landmarks, forgery_mask)
+
+        forged = [features for features in analysis.values() if features is not None]
+        has_flag = any(features[field] for features in forged for field in FLAG_FIELDS)
+
+        if not forged:
+            result["status"] = "no_forged_region"
+            return result
+
+        if not has_flag:
+            result["status"] = "no_flag"
+            return result
 
         if save_masks:
             mask_dir = root_path / "forgery_masks" / row["vid"]
             mask_dir.mkdir(parents=True, exist_ok=True)
             cv2.imwrite(str(mask_dir / f"{row['frame_idx']}.png"), forgery_mask)
-
-        analysis = analyze_frame(real_image, fake_image, landmarks, forgery_mask)
     except Exception as e:
         print(f"[error] {row['vid']}/{row['frame_idx']}: {type(e).__name__}: {e}")
         result["status"] = "error"
@@ -87,7 +102,7 @@ def process_frame(row: dict, root_path: Path, save_masks: bool) -> dict:
             for field, value in features.items():
                 result[f"{region}_{field}"] = value
 
-    result["status"] = "ok" if any(features is not None for features in analysis.values()) else "no_forged_region"
+    result["status"] = "ok"
 
     return result
 
@@ -109,6 +124,25 @@ def save_parquet(rows: list, previous_df: pd.DataFrame, output_path: Path):
     tmp_path = output_path.with_name(output_path.name + ".tmp")
     df.to_parquet(tmp_path, index=False)
     tmp_path.replace(output_path)
+
+def filter_metadata(root_path: Path, kept_df: pd.DataFrame):
+    """
+    Keeps all REAL rows and only the FAKE rows saved to the parquet file in train_clip_frame_metadata.csv.
+    The csv file is overwritten, so keep a copy of the original if it is needed.
+    """
+
+    csv_path = root_path / METADATA_NAME
+
+    meta_df = pd.read_csv(csv_path, dtype={'vid': str, 'ori_vid': str})
+
+    kept_keys = set(zip(kept_df['vid'], kept_df['frame_idx']))
+    in_kept = pd.Series([(vid, idx) in kept_keys for vid, idx in zip(meta_df['vid'], meta_df['frame_idx'])], index=meta_df.index)
+
+    filtered_df = meta_df[(meta_df['label'] != 'FAKE') | in_kept]
+
+    filtered_df.to_csv(csv_path, index=False)
+
+    return meta_df, filtered_df
 
 def extract_landmarks_if_needed(root_path: Path):
     """raw_annotation reads landmarks_68/{vid}/{frame_idx}.npy, so landmarks_68.tar is extracted if the folder does not exist"""
@@ -164,12 +198,13 @@ def main():
 
     previous_df = None
 
+    # Skipped frames are not recorded, so they are analyzed again when a stopped run resumes
     if output_path.exists():
         previous_df = pd.read_parquet(output_path)
         done = set(zip(previous_df['vid'], previous_df['frame_idx']))
 
         pairs_df = pairs_df[[(vid, idx) not in done for vid, idx in zip(pairs_df['vid'], pairs_df['frame_idx'])]]
-        print(f"Resuming: {len(previous_df)} frames are already processed")
+        print(f"Resuming: {len(previous_df)} frames are already saved")
 
     rows_to_process = pairs_df.to_dict('records')
 
@@ -183,7 +218,9 @@ def main():
         nonlocal previous_df, pending
 
         if pending:
-            save_parquet(pending, previous_df, output_path)
+            kept = [row for row in pending if row["status"] == "ok"]
+
+            save_parquet(kept, previous_df, output_path)
             previous_df = pd.read_parquet(output_path)
             new_rows.extend(pending)
             pending = []
@@ -220,24 +257,35 @@ def main():
 
     df = previous_df
 
+    # A pilot run (--limit-per-source) only saw a part of the frames, so the metadata is not filtered
+    if args.limit_per_source == 0:
+        meta_df, filtered_meta_df = filter_metadata(root_path, df)
+    else:
+        meta_df = filtered_meta_df = None
+
     print(f"\n{g_}{s_}{'='*50}{rs_}")
     print(f"{g_}{s_}Processing Summary Report{rs_}")
     print(f"{g_}{s_}{'='*50}{rs_}")
-    print(f" - Total Frames           : {len(df)}")
+    print(f" - Kept (status ok)       : {len(df)}")
     print(f" - Newly Processed        : {len(new_rows)}")
     print(f" - Total Time Taken       : {y_}{total_time:.2f}s{rs_}")
 
-    print("\nStatus by source:")
-    print(pd.crosstab(df['source'], df['status']).to_string())
+    if new_rows:
+        print("\nStatus by source (newly processed frames):")
+        print(pd.crosstab(pd.Series([r['source'] for r in new_rows], name='source'),
+                          pd.Series([r['status'] for r in new_rows], name='status')).to_string())
 
-    print("\nForged regions (ratio of frames with status ok or no_forged_region):")
-    analyzed = df[df['status'].isin(['ok', 'no_forged_region'])]
+    print("\nForged regions (ratio of kept frames):")
 
     for region in REGIONS:
-        forged = int(analyzed[f"{region}_forged"].sum())
-        print(f"   {region:<6}: {forged}/{len(analyzed)}")
+        forged = int(df[f"{region}_forged"].sum())
+        print(f"   {region:<6}: {forged}/{len(df)}")
 
     print(f"\n{y_}Parquet saved to: {output_path}{rs_}")
+
+    if filtered_meta_df is not None:
+        print(f"{y_}Metadata filtered: {METADATA_NAME} {len(meta_df)} -> {len(filtered_meta_df)} rows "
+              f"(all REAL rows and the kept FAKE rows){rs_}")
 
     if tar_path is not None:
         print(f"{y_}Tar saved to: {tar_path}{rs_}")

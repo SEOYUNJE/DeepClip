@@ -111,14 +111,20 @@ python -m preprocess.raw_annotation --root-dir DATA_ROOT --output pilot.parquet 
 ```
 
 The parquet file is saved while running, so a stopped run resumes from the frames which are not yet in the
-file. The analysis took about 0.3 s (224 px) to 0.75 s (400 px) per frame on one CPU core in a synthetic benchmark
+parquet file. Skipped frames are not recorded, so they are analyzed again. The analysis took about 0.3 s (224 px) to 0.75 s (400 px) per frame on one CPU core in a synthetic benchmark
 (SSIM is more than 90% of it), so use `--num-workers`.
 
 | Output | Description |
 | ------ | ----------- |
-| `forgery_masks/{vid}/{frame_idx}.png` | 8-bit forgery mask of the fake crop |
+| `forgery_masks/{vid}/{frame_idx}.png` | 8-bit forgery mask of the fake crop (kept frames only) |
 | `forgery_masks.tar` | tar of `forgery_masks/` |
-| `raw_annotation.parquet` | One row per fake frame of `train_clip_frame_metadata.csv` |
+| `raw_annotation.parquet` | One row per kept fake frame |
+| `train_clip_frame_metadata.csv` | **Overwritten** with all REAL rows and the kept FAKE rows. Keep a copy of the original if it is needed |
+
+Only the fake frames with `status` `ok` are kept: at least one region is forged **and** at least one forgery flag
+(`blur`, `color`, `texture`, `structure`, `blend`) of the forged regions is on. The other frames are skipped
+(`no_forged_region`, `no_flag`, `no_landmark`, `no_pair`, `error`) and get no forgery mask. REAL rows are always
+kept. A pilot run (`--limit-per-source`) does not change `train_clip_frame_metadata.csv`.
 
 ## Raw annotation
 
@@ -130,17 +136,39 @@ turned into text here: choosing which regions and types to describe is left to t
 | Column | Description |
 | ------ | ----------- |
 | `vid`, `ori_vid`, `frame_idx`, `source` | Identify the fake frame. The real frame is `crops/{ori_vid}/{frame_idx}.png` |
-| `status` | `ok`: at least one forged region, `no_forged_region`, `no_landmark`: the landmark file is missing, `no_pair`: a crop image is missing, `error`: unexpected error (message printed) |
+| `status` | `ok`: at least one forged region and one forgery flag (the only status saved), `no_forged_region`, `no_flag`: forged region(s) without any flag, `no_landmark`: the landmark file is missing, `no_pair`: a crop image is missing, `error`: unexpected error (message printed) |
 | `{region}_forged` | Whether the region is forged |
-| `{region}_blur_score`, `_blur_flag` | Laplacian variance of the real minus the fake image. Flag: score > 100 |
-| `{region}_color_score`, `_color_flag` | Mean of the differences of the mean and std in the Lab color space. Flag: > 2.0 |
-| `{region}_texture_score`, `_texture_flag` | Absolute difference of the GLCM contrast. Flag: > 0.7 |
-| `{region}_structure_score`, `_structure_flag` | SSIM of the real / fake pair. Flag: < 0.97 |
-| `{region}_blend_gradient`, `_blend_edge`, `_blend_freq` | Gradient (> 0.5), edge (> 0.4) and frequency (> 0.5) scores at the region boundary |
+| `{region}_blur_score`, `_blur_flag` | Laplacian variance of the real minus the fake image. Flag: score above the threshold |
+| `{region}_color_score`, `_color_flag` | Mean of the differences of the mean and std in the Lab color space. Flag: above the threshold |
+| `{region}_texture_score`, `_texture_flag` | Absolute difference of the GLCM contrast. Flag: above the threshold |
+| `{region}_structure_score`, `_structure_flag` | SSIM of the real / fake pair. Flag: below the threshold |
+| `{region}_blend_gradient`, `_blend_edge`, `_blend_freq` | Gradient, edge and frequency scores at the region boundary |
 | `{region}_blend_flag` | At least two of the three blending scores exceed their thresholds |
 
-The scores and flags are empty when the region is not forged or `status` is not `ok`. The thresholds are the
-ones of the original implementation.
+The scores and flags are empty when the region is not forged or `status` is not `ok`.
+
+### Thresholds
+
+The thresholds are the same for all regions (constants in `forgery_features.py`). Only the forgery mask threshold (55) and
+the blend gradient threshold (0.5) are the original values. The others are adjusted to the FF++ score distribution
+because the original values turned the blur and color flags on for only 1 to 8% of the forged regions, the texture,
+structure (`face`) and edge flags on for about 90% or more, and the frequency flag never.
+
+| Type | Flag is on if | Original |
+| ---- | ------------- | -------- |
+| blur | score > 25 | 100 |
+| color | score > 1.0 | 2.0 |
+| texture | score > 2.8 | 0.7 |
+| structure | score < 0.985 | 0.97 |
+| blend | at least two of gradient > 0.5, edge > 4, frequency > 0.15 | 0.5, 0.4, 0.5 |
+
+`structure` is an SSIM (a similarity, 1 means identical), so a lower score means a more deformed region and the flag uses `<`.
+The other scores are differences, so their flags use `>`.
+
+Known limits on FF++ (forged regions): the structure score depends on the area of the region, so a single threshold
+cannot fit all regions. At 0.985 its flag is on for 100% of `face`, so a forged `face` always has a flag, and for 85% of
+`eyes`, 48% of `nose` and 61% of `mouth`. The blending frequency scores are only about 0.13 to 0.17, so a threshold of
+0.15 separates them by small differences. Use the stored scores if you need the magnitude.
 
 ### Differences from the original implementation
 

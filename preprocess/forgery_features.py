@@ -9,9 +9,13 @@ Faithful to the original implementation:
       like the original code does (the channel order is not swapped).
     - Features are computed on the whole image multiplied by the region mask (pixels outside of the
       region are 0), not only on the pixels inside of the region.
-    - All thresholds are the values of the original code.
+    - The thresholds of the forgery mask, blend gradient (0.5) are the values of the original code.
 
 Differences from the original implementation:
+    - The thresholds of blur, color, texture, structure, blend edge and blend frequency are adjusted to the FF++
+      score distribution. The original values (100, 2.0, 0.7, 0.97, 0.4, 0.5) turn the blur and color flags on too
+      rarely and the texture, structure and edge flags on almost always for FF++, and the frequency flag never.
+      The thresholds are the same for all regions.
     - The same region mask (built from the landmarks of the fake crop) is applied to the real and fake
       images. The original builds the real region from the landmarks of the real image.
     - Every forged region is analyzed and the scores are returned, not only the flags.
@@ -29,15 +33,14 @@ REGIONS = ("face", "eyes", "nose", "mouth")
 
 FACE_POINTS = list(range(17, 68))
 
-# Thresholds of the original implementation
 MASK_THRESHOLD = 55
-BLUR_THRESHOLD = 100
-COLOR_THRESHOLD = 2.0
-TEXTURE_THRESHOLD = 0.7
-STRUCTURE_THRESHOLD = 0.97
+BLUR_THRESHOLD = 25
+COLOR_THRESHOLD = 1.0
+TEXTURE_THRESHOLD = 2.8
+STRUCTURE_THRESHOLD = 0.985
 GRADIENT_THRESHOLD = 0.5
-EDGE_THRESHOLD = 0.4
-FREQUENCY_THRESHOLD = 0.5
+EDGE_THRESHOLD = 4
+FREQUENCY_THRESHOLD = 0.15
 BOUNDARY_WIDTH = 10
 
 # Names of the values computed for each forged region
