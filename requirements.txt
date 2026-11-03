@@ -10,6 +10,17 @@ scikit-image>=0.22.0
 dlib>=19.24.0
 ultralytics>=8.4.41
 
+# --- [Deep Learning] ---
+torch>=2.4.0  # nn.RMSNorm
+timm>=1.0.0
+albumentations>=2.0.8
+torchmetrics>=1.4.0
+scikit-learn>=1.6.1
+
+# --- [Text & Config] ---
+regex>=2023.0.0  # CLIP tokenizer
+omegaconf>=2.3.0
+
 # --- [Utilities] ---
 tqdm>=4.60.0
 colorama>=0.4.6
