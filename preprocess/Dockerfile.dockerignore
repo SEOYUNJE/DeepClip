@@ -2,7 +2,6 @@
 # Everything is excluded, then only the files of the image are added back.
 *
 
-!requirements.txt
 !preprocess/
 
 preprocess/**/__pycache__/
