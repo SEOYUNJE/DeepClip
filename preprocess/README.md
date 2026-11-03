@@ -17,26 +17,26 @@ To build a docker image run from the repository root:
 docker build -f preprocess/Dockerfile -t deepclip-preprocess .
 ```
 
-Only `requirements.txt` and `preprocess/` are sent to the build (`preprocess/Dockerfile.dockerignore`, BuildKit).
+Only `preprocess/` is sent to the build (`preprocess/Dockerfile.dockerignore`, BuildKit).
 Use `--build-arg BASE_IMAGE=python:3.11-slim` for a CPU-only image.
 
 ## Running docker
 
 ```bash
-docker run --gpus all --ipc=host --rm --volume <DATA_ROOT>:/data --volume deepclip-cache:/root/.cache/deepclip -it deepclip-preprocess
+docker run --gpus all --shm-size=8g --rm -v <DATA_ROOT>:/data -v deepclip-cache:/root/.cache/deepclip -it deepclip-preprocess
 ```
 
 `<DATA_ROOT>` is the directory with the FF++ videos (`original/`, `Deepfakes/`, ...) and `csv/FF++_Metadata.csv`.
 The weights are not in the image: they are downloaded to the `deepclip-cache` volume on the first run
 (see [Requirements](#requirements)).
 
-## Data preparation
+### Steps and arguments
 
-`run_pipeline.sh` (the entrypoint of the image) runs all the steps below in order. Set `STEPS` to run only some
-steps, and `*_ARGS` to replace the default arguments of a step:
+`run_pipeline.sh` (the entrypoint of the image) runs all the steps of [Data preparation](#data-preparation) in order.
+Set `STEPS` to run only some steps, and `*_ARGS` to replace the default arguments of a step:
 
 ```bash
-docker run --gpus all --ipc=host --rm --volume <DATA_ROOT>:/data --volume deepclip-cache:/root/.cache/deepclip -e STEPS=4,5 -e RAW_ANNOTATION_ARGS="--num-workers 8 --no-tar" -it deepclip-preprocess
+docker run --gpus all --shm-size=8g --rm -v <DATA_ROOT>:/data -v deepclip-cache:/root/.cache/deepclip -e STEPS=4,5 -e RAW_ANNOTATION_ARGS="--num-workers 8 --no-tar" -it deepclip-preprocess
 ```
 
 | Variable | Default |
@@ -50,23 +50,43 @@ docker run --gpus all --ipc=host --rm --volume <DATA_ROOT>:/data --volume deepcl
 | `LANDMARK_ARGS` | |
 | `RAW_ANNOTATION_ARGS` | `--num-workers $NUM_WORKERS` |
 
+## Data preparation
+
+The steps need the FaceForensics++ (c23) videos and their csv files. Download them from
+[Kaggle](https://www.kaggle.com/datasets/xdxd003/ff-c23), or email seoyunje2001@gmail.com to get a Google Drive share,
+and put them in `DATA_ROOT`.
+
+All files are written in `DATA_ROOT` (the number is the step that writes the file):
+
 ```
-split_data.py            train_metadata.csv, test_metadata.csv
-detect_original_face.py  boxes/{ori_vid}.json                 face boxes of the real videos (YOLO)
-crop_face.py             crops/ + train_frame_metadata.csv    face crops of real and fake videos
-generate_landmark.py     landmarks_68/ -> landmarks_68.tar    68 landmarks of the fake crops (dlib)
-                         + train_clip_frame_metadata.csv
-raw_annotation.py        forgery_masks/ -> forgery_masks.tar  forgery analysis of the fake crops
-                         + raw_annotation.parquet
+DATA_ROOT/
+├── original/, Deepfakes/, ...         (input) FF++ videos
+├── csv/FF++_Metadata.csv              (input) FF++ metadata
+├── train_metadata.csv                 1. split_data
+├── test_metadata.csv                  1. split_data
+├── boxes/
+│   └── {ori_vid}.json                 2. detect_original_face  face boxes of the real videos (YOLO)
+├── crops/
+│   └── {vid}/{frame_idx}.png          3. crop_face             face crops of the real and fake videos
+├── train_frame_metadata.csv           3. crop_face
+├── landmarks_68/
+│   └── {vid}/{frame_idx}.npy          4. generate_landmark     68 landmarks of the fake crops (dlib)
+├── landmarks_68.tar                   4. generate_landmark
+├── train_clip_frame_metadata.csv      4. generate_landmark, rewritten by 5 (kept frames + pair_label)
+├── forgery_masks/
+│   └── {vid}/{frame_idx}.png          5. raw_annotation        forgery masks of the fake crops
+├── forgery_masks.tar                  5. raw_annotation
+└── raw_annotation.parquet             5. raw_annotation        forgery analysis of the fake crops
 ```
 
 `split_data`, `detect_original_face` and `crop_face` come from the preprocessing of
 [DeepGuard](https://github.com/HanMoonSub/DeepGuard) (without its YOLO landmarks, which DeepClip does not use).
 
-Without Docker, run each step from the repository root with the commands below. On Colab, work on the local disk
-(`/content`) and copy the results to Drive. Writing and reading many small files directly on Drive is slow.
+Without Docker, install the packages first (see [Requirements](#requirements)), then run each step from the repository
+root with the commands below. On Colab, work on the local disk (`/content`) and copy the results to Drive. Writing and
+reading many small files directly on Drive is slow.
 
-##### 1. Split data
+### 1. Split data
 
 Splits the videos of `train.json` and `test.json` and writes their metadata.
 
@@ -76,7 +96,7 @@ python -m preprocess.split_data --root-dir DATA_ROOT
 
 This step produces `train_metadata.csv` and `test_metadata.csv`.
 
-##### 2. Detect original face
+### 2. Detect original face
 
 Detects the faces of the **real** videos only with YOLO (GPU).
 
@@ -87,7 +107,7 @@ python -m preprocess.detect_original_face --root-dir DATA_ROOT --num-frames 20 -
 This step produces `boxes/{ori_vid}.json`. Fake videos reuse the face boxes of their real video, so a fake crop and
 the real crop with the same `frame_idx` are pixel-aligned, which the forgery mask of step 5 needs.
 
-##### 3. Crop face
+### 3. Crop face
 
 Crops the faces of the real and fake videos with the boxes of step 2.
 
@@ -99,7 +119,7 @@ This step produces `crops/{video_id}/{frame_idx}.png` and `train_frame_metadata.
 (`vid, ori_vid, source, frame_idx, label`), which records every saved crop. It is the input of the next step and
 is not needed to train a model.
 
-##### 4. Generate landmark
+### 4. Generate landmark
 
 Detects 68 landmarks with dlib on the **fake** crops only. The landmarks are only used to build the region masks of
 the fake frames, and the same mask is applied to the aligned real crop.
@@ -119,7 +139,7 @@ This step produces:
 Already generated `.npy` files are reused when the script is run again. Use `--use-full-crop-rect` to use the whole
 crop as the face rectangle instead of dlib's face detector, and `--no-tar` to skip the tar file.
 
-##### 5. Raw annotation
+### 5. Raw annotation
 
 Analyzes the forged regions and forgery types of every fake crop (see [Raw annotation](#raw-annotation)).
 If `landmarks_68/` does not exist, it is extracted from `landmarks_68.tar`.
@@ -246,8 +266,10 @@ The analysis follows `raw_annotation.py` of [VLFFD](https://github.com/skJack/VL
 To run the steps without Docker:
 
 ```bash
-pip install -r requirements.txt
+pip install -r preprocess/requirements.txt
 ```
+
+`preprocess/requirements.txt` pins the versions used by the Docker image (Python 3.11).
 
 Two weight files are **not stored in the repository** (nor in the Docker image). They are downloaded automatically to
 `~/.cache/deepclip/` the first time they are needed (no checksum is verified):
