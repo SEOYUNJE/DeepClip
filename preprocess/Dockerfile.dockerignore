@@ -1,0 +1,14 @@
+# Used by BuildKit for preprocess/Dockerfile only. The build context is the repository root.
+# Everything is excluded, then only the files of the image are added back.
+*
+
+!requirements.txt
+!preprocess/
+
+preprocess/**/__pycache__/
+preprocess/**/*.pyc
+preprocess/**/*.parquet
+preprocess/**/*.tar
+preprocess/**/*.pt
+preprocess/**/*.dat
+preprocess/**/*.csv
