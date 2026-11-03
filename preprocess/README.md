@@ -7,7 +7,48 @@ Builds the frame-level dataset of FaceForensics++ (FF++) used by DeepClip and ge
 FF++ has 5 manipulation methods (`Deepfakes`, `Face2Face`, `FaceShifter`, `FaceSwap`, `NeuralTextures`) and the
 `Original` videos. Only the **train** split (`train.json`) is processed.
 
-## Pipeline
+## Building docker image
+
+Requires [Docker Engine](https://docs.docker.com/engine/install/) and, for the GPU, the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+To build a docker image run from the repository root:
+
+```bash
+docker build -f preprocess/Dockerfile -t deepclip-preprocess .
+```
+
+Only `requirements.txt` and `preprocess/` are sent to the build (`preprocess/Dockerfile.dockerignore`, BuildKit).
+Use `--build-arg BASE_IMAGE=python:3.11-slim` for a CPU-only image.
+
+## Running docker
+
+```bash
+docker run --gpus all --ipc=host --rm --volume <DATA_ROOT>:/data --volume deepclip-cache:/root/.cache/deepclip -it deepclip-preprocess
+```
+
+`<DATA_ROOT>` is the directory with the FF++ videos (`original/`, `Deepfakes/`, ...) and `csv/FF++_Metadata.csv`.
+The weights are not in the image: they are downloaded to the `deepclip-cache` volume on the first run
+(see [Requirements](#requirements)).
+
+## Data preparation
+
+`run_pipeline.sh` (the entrypoint of the image) runs all the steps below in order. Set `STEPS` to run only some
+steps, and `*_ARGS` to replace the default arguments of a step:
+
+```bash
+docker run --gpus all --ipc=host --rm --volume <DATA_ROOT>:/data --volume deepclip-cache:/root/.cache/deepclip -e STEPS=4,5 -e RAW_ANNOTATION_ARGS="--num-workers 8 --no-tar" -it deepclip-preprocess
+```
+
+| Variable | Default |
+| -------- | ------- |
+| `STEPS` | `1,2,3,4,5` |
+| `DATA_ROOT` | `/data` |
+| `NUM_WORKERS` | `nproc` (used by the default `RAW_ANNOTATION_ARGS`) |
+| `SPLIT_DATA_ARGS` | |
+| `DETECT_FACE_ARGS` | `--num-frames 20 --conf-thres 0.5 --min-face-ratio 0.01 --jitter 5` |
+| `CROP_FACE_ARGS` | `--margin-ratio 0.2 --margin-jitter 0.0` |
+| `LANDMARK_ARGS` | |
+| `RAW_ANNOTATION_ARGS` | `--num-workers $NUM_WORKERS` |
 
 ```
 split_data.py            train_metadata.csv, test_metadata.csv
@@ -21,62 +62,53 @@ raw_annotation.py        forgery_masks/ -> forgery_masks.tar  forgery analysis o
 
 `split_data`, `detect_original_face` and `crop_face` come from the preprocessing of
 [DeepGuard](https://github.com/HanMoonSub/DeepGuard) (without its YOLO landmarks, which DeepClip does not use).
-Fake videos reuse the face boxes of their real video, so a fake crop and the real crop with the same
-`frame_idx` are pixel-aligned.
 
-## Requirements
+Without Docker, run each step from the repository root with the commands below. On Colab, work on the local disk
+(`/content`) and copy the results to Drive. Writing and reading many small files directly on Drive is slow.
 
-```bash
-pip install -r requirements.txt
-```
+##### 1. Split data
 
-Two weight files are **not stored in the repository**. They are downloaded automatically to
-`~/.cache/deepclip/` the first time they are needed (no checksum is verified):
-
-| File | Used by | Source |
-| ---- | ------- | ------ |
-| `yolov8n-face.pt` | `detect_original_face.py` | [v0.0.1 release](https://github.com/SEOYUNJE/DeepClip/releases/tag/v0.0.1), from [derronqi/yolov8-face](https://github.com/derronqi/yolov8-face) (GPL-3.0) |
-| `shape_predictor_68_face_landmarks.dat` | `generate_landmark.py` | [v0.0.1 release](https://github.com/SEOYUNJE/DeepClip/releases/tag/v0.0.1), from [dlib](http://dlib.net/files/) |
-
-> The dlib 68-point model was trained on the iBUG 300-W dataset, whose license may restrict commercial use.
-> Check the terms before redistributing or using it commercially.
-
-## Usage
-
-`DATA_ROOT` is the directory with the FF++ videos (`original/`, `Deepfakes/`, ...) and `csv/FF++_Metadata.csv`.
-On Colab, work on the local disk (`/content`) and copy the results to Drive. Writing and reading many small files
-directly on Drive is slow.
-
-### 1. Split data
+Splits the videos of `train.json` and `test.json` and writes their metadata.
 
 ```bash
 python -m preprocess.split_data --root-dir DATA_ROOT
 ```
 
-### 2. Detect original face
+This step produces `train_metadata.csv` and `test_metadata.csv`.
+
+##### 2. Detect original face
+
+Detects the faces of the **real** videos only with YOLO (GPU).
 
 ```bash
 python -m preprocess.detect_original_face --root-dir DATA_ROOT --num-frames 20 --conf-thres 0.5 --min-face-ratio 0.01 --jitter 5
 ```
 
-### 3. Crop face
+This step produces `boxes/{ori_vid}.json`. Fake videos reuse the face boxes of their real video, so a fake crop and
+the real crop with the same `frame_idx` are pixel-aligned, which the forgery mask of step 5 needs.
+
+##### 3. Crop face
+
+Crops the faces of the real and fake videos with the boxes of step 2.
 
 ```bash
 python -m preprocess.crop_face --root-dir DATA_ROOT --margin-ratio 0.2 --margin-jitter 0.0
 ```
 
-Output: `crops/{video_id}/{frame_idx}.png` and `train_frame_metadata.csv`
+This step produces `crops/{video_id}/{frame_idx}.png` and `train_frame_metadata.csv`
 (`vid, ori_vid, source, frame_idx, label`), which records every saved crop. It is the input of the next step and
 is not needed to train a model.
 
-### 4. Generate landmark
+##### 4. Generate landmark
+
+Detects 68 landmarks with dlib on the **fake** crops only. The landmarks are only used to build the region masks of
+the fake frames, and the same mask is applied to the aligned real crop.
 
 ```bash
 python -m preprocess.generate_landmark --root-dir DATA_ROOT
 ```
 
-Detects 68 landmarks with dlib on the **fake** crops only (the landmarks are only used to build the region masks
-of the fake frames).
+This step produces:
 
 | Output | Description |
 | ------ | ----------- |
@@ -87,13 +119,14 @@ of the fake frames).
 Already generated `.npy` files are reused when the script is run again. Use `--use-full-crop-rect` to use the whole
 crop as the face rectangle instead of dlib's face detector, and `--no-tar` to skip the tar file.
 
-### 5. Raw annotation
+##### 5. Raw annotation
+
+Analyzes the forged regions and forgery types of every fake crop (see [Raw annotation](#raw-annotation)).
+If `landmarks_68/` does not exist, it is extracted from `landmarks_68.tar`.
 
 ```bash
 python -m preprocess.raw_annotation --root-dir DATA_ROOT --num-workers 2
 ```
-
-If `landmarks_68/` does not exist, it is extracted from `landmarks_68.tar`.
 
 | Argument | Default | Description |
 | -------- | ------- | ----------- |
@@ -103,6 +136,7 @@ If `landmarks_68/` does not exist, it is extracted from `landmarks_68.tar`.
 | `--flush-every` | 2000 | Save the parquet file after every N frames |
 | `--no-masks` | | Do not save the forgery masks |
 | `--no-tar` | | Do not create `forgery_masks.tar` |
+| `--metadata-only` | | Skip the analysis and only rewrite `train_clip_frame_metadata.csv` (with `pair_label`) from the existing parquet file |
 
 Run a pilot first to check the results:
 
@@ -114,17 +148,26 @@ The parquet file is saved while running, so a stopped run resumes from the frame
 parquet file. Skipped frames are not recorded, so they are analyzed again. The analysis took about 0.3 s (224 px) to 0.75 s (400 px) per frame on one CPU core in a synthetic benchmark
 (SSIM is more than 90% of it), so use `--num-workers`.
 
+This step produces:
+
 | Output | Description |
 | ------ | ----------- |
 | `forgery_masks/{vid}/{frame_idx}.png` | 8-bit forgery mask of the fake crop (kept frames only) |
 | `forgery_masks.tar` | tar of `forgery_masks/` |
 | `raw_annotation.parquet` | One row per kept fake frame |
-| `train_clip_frame_metadata.csv` | **Overwritten** with all REAL rows and the kept FAKE rows. Keep a copy of the original if it is needed |
+| `train_clip_frame_metadata.csv` | **Overwritten** with all REAL rows and the kept FAKE rows, and a `pair_label` column (see [pair_label](#pair_label)). Keep a copy of the original if it is needed |
 
 Only the fake frames with `status` `ok` are kept: at least one region is forged **and** at least one forgery flag
 (`blur`, `color`, `texture`, `structure`, `blend`) of the forged regions is on. The other frames are skipped
 (`no_forged_region`, `no_flag`, `no_landmark`, `no_pair`, `error`) and get no forgery mask. REAL rows are always
 kept. A pilot run (`--limit-per-source`) does not change `train_clip_frame_metadata.csv`.
+
+Skipped frames are analyzed again when the script is run again, so use `--metadata-only` to only rebuild the csv file
+(for example, after an older version of the script wrote it without `pair_label`):
+
+```bash
+python -m preprocess.raw_annotation --root-dir DATA_ROOT --metadata-only
+```
 
 ## Raw annotation
 
@@ -146,6 +189,20 @@ turned into text here: choosing which regions and types to describe is left to t
 | `{region}_blend_flag` | At least two of the three blending scores exceed their thresholds |
 
 The scores and flags are empty when the region is not forged or `status` is not `ok`.
+
+### pair_label
+
+`train_clip_frame_metadata.csv` gets a `pair_label` column: the 20 flags of a frame as a string of `0` and `1`, in the
+order region (`face`, `eyes`, `nose`, `mouth`) × type (`blur`, `color`, `texture`, `structure`, `blend`). Characters
+0 to 4 are `face_blur` … `face_blend`, 5 to 9 are `eyes`, 10 to 14 `nose` and 15 to 19 `mouth`. An empty flag (region
+not forged) is `0`, and REAL rows are all `0`. The order is `PAIR_ORDER` of `deepclip/data/text/template.py`.
+
+It is a string so that its leading zeros are kept: read the csv with `dtype={'pair_label': str}`.
+
+| vid | label | pair_label (spaces added) | Meaning |
+| --- | ----- | ------------------------- | ------- |
+| `000` | REAL | `00000 00000 00000 00000` | |
+| `000_003` | FAKE | `01011 00010 00000 10001` | face: color, structure, blend; eyes: structure; mouth: blur, blend |
 
 ### Thresholds
 
@@ -183,6 +240,25 @@ The analysis follows `raw_annotation.py` of [VLFFD](https://github.com/skJack/VL
 - `multichannel=True` of scikit-image is replaced by `channel_axis=-1`, and a dilation of 0 iterations (which fills the
   whole image in scipy) is skipped.
 - Pixels with a negative SSIM give a mask value above 255, which wraps around in `uint8`, as in the original.
+
+## Requirements
+
+To run the steps without Docker:
+
+```bash
+pip install -r requirements.txt
+```
+
+Two weight files are **not stored in the repository** (nor in the Docker image). They are downloaded automatically to
+`~/.cache/deepclip/` the first time they are needed (no checksum is verified):
+
+| File | Used by | Source |
+| ---- | ------- | ------ |
+| `yolov8n-face.pt` | `detect_original_face.py` | [v0.0.1 release](https://github.com/SEOYUNJE/DeepClip/releases/tag/v0.0.1), from [derronqi/yolov8-face](https://github.com/derronqi/yolov8-face) (GPL-3.0) |
+| `shape_predictor_68_face_landmarks.dat` | `generate_landmark.py` | [v0.0.1 release](https://github.com/SEOYUNJE/DeepClip/releases/tag/v0.0.1), from [dlib](http://dlib.net/files/) |
+
+> The dlib 68-point model was trained on the iBUG 300-W dataset, whose license may restrict commercial use.
+> Check the terms before redistributing or using it commercially.
 
 ## Citation
 

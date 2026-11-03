@@ -31,6 +31,11 @@ FLOAT_COLUMNS = [col for col in COLUMNS if col not in ID_COLUMNS and col not in 
 FLAG_FIELDS = [field for field in FEATURE_FIELDS if field.endswith("_flag")]
 METADATA_NAME = "train_clip_frame_metadata.csv"
 
+# Same order as PAIR_ORDER of deepclip/data/text/template.py: region (face, eyes, nose, mouth) x
+# type (blur, color, texture, structure, blend)
+PAIR_FLAG_COLUMNS = [f"{region}_{field}" for region in REGIONS for field in FLAG_FIELDS]
+EMPTY_PAIR_LABEL = "0" * len(PAIR_FLAG_COLUMNS)
+
 def process_frame(row: dict, root_path: Path, save_masks: bool) -> dict:
     """
     Analyzes one FAKE frame and returns one row of raw_annotation.parquet.
@@ -125,20 +130,34 @@ def save_parquet(rows: list, previous_df: pd.DataFrame, output_path: Path):
     df.to_parquet(tmp_path, index=False)
     tmp_path.replace(output_path)
 
+def pair_labels(df: pd.DataFrame) -> list:
+    """20-character 0/1 string of the (region, type) flags of each row. An empty flag (region not forged) is 0"""
+
+    flags = df[PAIR_FLAG_COLUMNS].fillna(False).astype(bool).to_numpy()
+
+    return ["".join("1" if flag else "0" for flag in row) for row in flags]
+
 def filter_metadata(root_path: Path, kept_df: pd.DataFrame):
     """
-    Keeps all REAL rows and only the FAKE rows saved to the parquet file in train_clip_frame_metadata.csv.
+    Keeps all REAL rows and only the FAKE rows saved to the parquet file in train_clip_frame_metadata.csv,
+    and writes the pair_label column (all 0 for REAL rows).
     The csv file is overwritten, so keep a copy of the original if it is needed.
     """
 
     csv_path = root_path / METADATA_NAME
 
-    meta_df = pd.read_csv(csv_path, dtype={'vid': str, 'ori_vid': str})
+    meta_df = pd.read_csv(csv_path, dtype={'vid': str, 'ori_vid': str, 'pair_label': str})
+    meta_df = meta_df.drop(columns='pair_label', errors='ignore')
 
-    kept_keys = set(zip(kept_df['vid'], kept_df['frame_idx']))
-    in_kept = pd.Series([(vid, idx) in kept_keys for vid, idx in zip(meta_df['vid'], meta_df['frame_idx'])], index=meta_df.index)
+    kept_labels = dict(zip(zip(kept_df['vid'], kept_df['frame_idx']), pair_labels(kept_df)))
+    keys = list(zip(meta_df['vid'], meta_df['frame_idx']))
+    is_fake = meta_df['label'] == 'FAKE'
+    in_kept = pd.Series([key in kept_labels for key in keys], index=meta_df.index)
 
-    filtered_df = meta_df[(meta_df['label'] != 'FAKE') | in_kept]
+    filtered_df = meta_df.copy()
+    filtered_df['pair_label'] = [kept_labels.get(key, EMPTY_PAIR_LABEL) if fake else EMPTY_PAIR_LABEL
+                                 for key, fake in zip(keys, is_fake)]
+    filtered_df = filtered_df[~is_fake | in_kept]
 
     filtered_df.to_csv(csv_path, index=False)
 
@@ -180,11 +199,22 @@ def main():
     parser.add_argument("--flush-every", default=2000, type=int, help="Save the parquet file after every N frames")
     parser.add_argument("--no-masks", action="store_true", help="Do not save forgery masks")
     parser.add_argument("--no-tar", action="store_true", help="Do not create forgery_masks.tar")
+    parser.add_argument("--metadata-only", action="store_true",
+                        help="Only rewrite train_clip_frame_metadata.csv (with pair_label) from the existing parquet file")
 
     args = parser.parse_args()
 
     root_path = Path(args.root_dir)
     output_path = root_path / args.output
+
+    if args.metadata_only:
+        if not output_path.exists():
+            raise FileNotFoundError(f"Parquet file not found: {output_path}")
+
+        meta_df, filtered_meta_df = filter_metadata(root_path, pd.read_parquet(output_path))
+        print(f"{y_}Metadata filtered: {METADATA_NAME} {len(meta_df)} -> {len(filtered_meta_df)} rows "
+              f"(all REAL rows and the kept FAKE rows, with pair_label){rs_}")
+        return
 
     start_time = time.time()
 
@@ -285,7 +315,7 @@ def main():
 
     if filtered_meta_df is not None:
         print(f"{y_}Metadata filtered: {METADATA_NAME} {len(meta_df)} -> {len(filtered_meta_df)} rows "
-              f"(all REAL rows and the kept FAKE rows){rs_}")
+              f"(all REAL rows and the kept FAKE rows, with pair_label){rs_}")
 
     if tar_path is not None:
         print(f"{y_}Tar saved to: {tar_path}{rs_}")
