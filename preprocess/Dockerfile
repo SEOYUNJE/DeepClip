@@ -1,7 +1,8 @@
 # FF++ preprocessing pipeline of DeepClip (split -> detect -> crop -> landmark -> raw annotation)
 #
 # Build from the repository root (the scripts run as `python -m preprocess.xxx`):
-#   docker build -f preprocess/Dockerfile -t deepclip-preprocess .
+#   docker build -f preprocess/Dockerfile -t deepclip-preprocess:gpu .
+#   docker build -f preprocess/Dockerfile --build-arg BASE_IMAGE=python:3.11-slim -t deepclip-preprocess:cpu .
 #
 # The weights (yolov8n-face.pt, shape_predictor_68_face_landmarks.dat) are not in the image: they are downloaded to
 # /root/.cache/deepclip on the first run, so mount a volume there to keep them.

@@ -11,44 +11,87 @@ FF++ has 5 manipulation methods (`Deepfakes`, `Face2Face`, `FaceShifter`, `FaceS
 
 Requires [Docker Engine](https://docs.docker.com/engine/install/) and, for the GPU, the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
-To build a docker image run from the repository root:
+
+### Building from source
+
+Run from the repository root. GPU image (CUDA base image):
 
 ```bash
-docker build -f preprocess/Dockerfile -t deepclip-preprocess .
+docker build -f preprocess/Dockerfile -t deepclip-preprocess:gpu .
+```
+
+CPU image (`python:3.11-slim` base image):
+
+```bash
+docker build -f preprocess/Dockerfile --build-arg BASE_IMAGE=python:3.11-slim -t deepclip-preprocess:cpu .
 ```
 
 Only `preprocess/` is sent to the build (`preprocess/Dockerfile.dockerignore`, BuildKit).
-Use `--build-arg BASE_IMAGE=python:3.11-slim` for a CPU-only image.
+
+### Prebuilt images
+
+The images are large, so prebuilt images are on Docker Hub:
+[seoyunje/deepclip-preprocess](https://hub.docker.com/r/seoyunje/deepclip-preprocess).
+Pull one instead of building it:
+
+```bash
+docker pull seoyunje/deepclip-preprocess:gpu
+```
+
+```bash
+docker pull seoyunje/deepclip-preprocess:cpu
+```
 
 ## Running docker
 
+GPU:
+
 ```bash
-docker run --gpus all --shm-size=8g --rm -v <DATA_ROOT>:/data -v deepclip-cache:/root/.cache/deepclip -it deepclip-preprocess
+docker run --gpus all --shm-size=8g --rm -v <DATA_ROOT>:/data -v deepclip-cache:/root/.cache/deepclip -it seoyunje/deepclip-preprocess:gpu
+```
+
+CPU:
+
+```bash
+docker run --shm-size=8g --rm -v <DATA_ROOT>:/data -v deepclip-cache:/root/.cache/deepclip -it seoyunje/deepclip-preprocess:cpu
 ```
 
 `<DATA_ROOT>` is the directory with the FF++ videos (`original/`, `Deepfakes/`, ...) and `csv/FF++_Metadata.csv`.
 The weights are not in the image: they are downloaded to the `deepclip-cache` volume on the first run
 (see [Requirements](#requirements)).
+With an image built from source, use `deepclip-preprocess:gpu` / `deepclip-preprocess:cpu` as the image name.
 
 ### Steps and arguments
 
 `run_pipeline.sh` (the entrypoint of the image) runs all the steps of [Data preparation](#data-preparation) in order.
 Set `STEPS` to run only some steps, and `*_ARGS` to replace the default arguments of a step:
 
+| Variable | Default | Other arguments |
+| -------- | ------- | --------------- |
+| `STEPS` | `1,2,3,4,5` | |
+| `DATA_ROOT` | `/data` | |
+| `NUM_WORKERS` | `nproc` (used by the default `RAW_ANNOTATION_ARGS`) | |
+| `SPLIT_DATA_ARGS` | | `--no-print-info` |
+| `DETECT_FACE_ARGS` | `--num-frames 20 --conf-thres 0.5 --min-face-ratio 0.01 --jitter 5` | |
+| `CROP_FACE_ARGS` | `--margin-ratio 0.2 --margin-jitter 0.0` | |
+| `LANDMARK_ARGS` | | `--predictor-path`, `--use-full-crop-rect`, `--no-tar` |
+| `RAW_ANNOTATION_ARGS` | `--num-workers $NUM_WORKERS` | `--output`, `--limit-per-source`, `--flush-every`, `--no-masks`, `--no-tar`, `--metadata-only` |
+
+`run_pipeline.sh` always passes `--root-dir $DATA_ROOT`, so do not set it in `*_ARGS`.
+A `*_ARGS` variable replaces all the default arguments of its step, so give every argument you want to keep.
+The later steps read the files of the earlier steps, so run them again after changing a step.
+
+Change the arguments of detect_original_face (step 2) and run steps 2 to 5:
+
 ```bash
-docker run --gpus all --shm-size=8g --rm -v <DATA_ROOT>:/data -v deepclip-cache:/root/.cache/deepclip -e STEPS=4,5 -e RAW_ANNOTATION_ARGS="--num-workers 8 --no-tar" -it deepclip-preprocess
+docker run --gpus all --shm-size=8g --rm -v <DATA_ROOT>:/data -v deepclip-cache:/root/.cache/deepclip -e STEPS=2,3,4,5 -e DETECT_FACE_ARGS="--num-frames 32 --conf-thres 0.6 --min-face-ratio 0.01 --jitter 5" -it seoyunje/deepclip-preprocess:gpu
 ```
 
-| Variable | Default |
-| -------- | ------- |
-| `STEPS` | `1,2,3,4,5` |
-| `DATA_ROOT` | `/data` |
-| `NUM_WORKERS` | `nproc` (used by the default `RAW_ANNOTATION_ARGS`) |
-| `SPLIT_DATA_ARGS` | |
-| `DETECT_FACE_ARGS` | `--num-frames 20 --conf-thres 0.5 --min-face-ratio 0.01 --jitter 5` |
-| `CROP_FACE_ARGS` | `--margin-ratio 0.2 --margin-jitter 0.0` |
-| `LANDMARK_ARGS` | |
-| `RAW_ANNOTATION_ARGS` | `--num-workers $NUM_WORKERS` |
+Change the arguments of crop_face (step 3) and run steps 3 to 5:
+
+```bash
+docker run --gpus all --shm-size=8g --rm -v <DATA_ROOT>:/data -v deepclip-cache:/root/.cache/deepclip -e STEPS=3,4,5 -e CROP_FACE_ARGS="--margin-ratio 0.3 --margin-jitter 0.05" -it seoyunje/deepclip-preprocess:gpu
+```
 
 ## Data preparation
 
