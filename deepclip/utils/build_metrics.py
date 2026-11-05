@@ -6,9 +6,10 @@ from torchmetrics import (
                             F1Score
                         )
 from torchmetrics.classification import MultilabelAveragePrecision
-from deepclip.data.text import PAIR_ORDER
+from deepclip.data.text import REGIONS, TYPES, PAIR_ORDER
 
-PAIR_NAMES = [f"{region}_{type_}" for region, type_ in PAIR_ORDER]
+# ap_{region}: mean AP of the 5 pairs of the region, ap_{type}: mean AP of the 4 pairs of the type
+AP_NAMES = [f"ap_{region}" for region in REGIONS] + [f"ap_{type_}" for type_ in TYPES]
 
 def build_metrics(device: str = "cpu"):
     """
@@ -29,8 +30,11 @@ def to_two_class(p_fake):
 
 class PairAveragePrecision:
     """
-    pair_map: macro mean of the Average Precision of the 20 (region, type) pairs.
-    Pairs with no positive image are left out (their AP is not defined).
+    Average Precision of the 20 (region, type) pairs, reported as
+        map           : mean AP of the 20 pairs
+        ap_{region}   : mean AP of the 5 pairs of each region (4 values)
+        ap_{type}     : mean AP of the 4 pairs of each type (5 values)
+    Pairs with no positive image are left out of every mean (their AP is not defined).
     The scores and targets of the whole epoch are kept, and compute() is called at the end of the epoch.
     """
 
@@ -48,11 +52,11 @@ class PairAveragePrecision:
         self.num_pos += targets.sum(dim=0)
 
     def compute(self):
-        """-> (pair_map, {pair name: AP}). AP is nan for pairs with no positive image"""
+        """-> (map, {AP name: mean AP}) with the 9 AP_NAMES. nan when no pair of a group has a positive image"""
         ap = self.metric.compute().float()
         ap[self.num_pos == 0] = float("nan")
 
-        valid = ~torch.isnan(ap)
-        pair_map = ap[valid].mean().item() if valid.any() else float("nan")
+        grid = ap.view(len(REGIONS), len(TYPES))
+        groups = [grid[r] for r in range(len(REGIONS))] + [grid[:, t] for t in range(len(TYPES))]
 
-        return pair_map, dict(zip(PAIR_NAMES, ap.tolist()))
+        return torch.nanmean(ap).item(), {name: torch.nanmean(g).item() for name, g in zip(AP_NAMES, groups)}
