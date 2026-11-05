@@ -5,9 +5,9 @@ from deepclip.data.text import REAL_TEXT, parse_pair_label, sample_selection, re
 
 class DeepClipCollate:
     """
-    Makes the captions of a batch and the targets of itc_loss.
+    Makes the captions of a batch and the targets of the loss.
 
-    For every image: REAL -> REAL_TEXT, FAKE -> a caption of the pairs chosen by sample_selection
+    For every image: REAL -> REAL_TEXT, FAKE -> the caption of the pair chosen by sample_selection
     (a new choice at every step). The B captions are reduced to the U unique captions (in order).
 
     Returns a dict:
@@ -15,10 +15,9 @@ class DeepClipCollate:
         labels       (B,)    0: REAL, 1: FAKE
         text_idx     (U,)    rows of text_table of the unique captions
         Y            (B,U)   1 if caption j is true for image i
-                             (REAL_TEXT column: image i is REAL, FAKE column: the pairs of caption j are all on in image i)
+                             (REAL_TEXT column: image i is REAL, FAKE column: the pair of caption j is on in image i)
         W            (B,U)   real_text_weight for the REAL_TEXT column, fake_text_weight for the FAKE columns
-        pair_targets (B,20)  pair_label of every image (all 0 for REAL), target of pair_map
-        pair_counts  (20,)   number of captions of the batch which contain each pair
+        pair_targets (B,20)  pair_label of every image (all 0 for REAL), target of map and the AP
     """
 
     def __init__(
@@ -26,10 +25,8 @@ class DeepClipCollate:
             caption_to_idx: dict,
             type_weights: np.ndarray,
             region_weights: np.ndarray,
-            max_regions: int,
-            max_types: int,
-            real_text_weight: float = 0.8,
-            fake_text_weight: float = 1.2,
+            real_text_weight: float = 1.0,
+            fake_text_weight: float = 1.0,
             seed: int | None = None,
             ):
         """
@@ -37,16 +34,13 @@ class DeepClipCollate:
             caption_to_idx: caption -> row of text_table (DeepClip.caption_to_idx).
             type_weights: (4,5) weights of the types (type_weights of the train FAKE frames).
             region_weights: (4,) weights of the regions (region_weights of the train FAKE frames).
-            max_regions, max_types: Same values as the model (DeepClip.max_regions, DeepClip.max_types).
-            real_text_weight, fake_text_weight: Weights of the REAL_TEXT column and the FAKE columns of itc_loss.
+            real_text_weight, fake_text_weight: Weights of the REAL_TEXT column and the FAKE columns of the loss.
             seed: Fixed seed for the same captions at every epoch (valid). None for new captions at every epoch (train).
         """
 
         self.caption_to_idx = caption_to_idx
         self.type_weights = type_weights
         self.region_weights = region_weights
-        self.max_regions = max_regions
-        self.max_types = max_types
         self.real_text_weight = real_text_weight
         self.fake_text_weight = fake_text_weight
         self.seed = seed
@@ -79,8 +73,7 @@ class DeepClipCollate:
         captions, selections = [], []
         for i in range(len(batch)):
             if is_fake[i]:
-                sel = sample_selection(lab[i], self.type_weights, self.region_weights, self.rng,
-                                       self.max_regions, self.max_types)
+                sel = sample_selection(lab[i], self.type_weights, self.region_weights, self.rng)
                 captions.append(render_caption(sel))
             else:
                 sel = np.zeros_like(lab[i])
@@ -96,7 +89,7 @@ class DeepClipCollate:
         is_real_col = np.array([c == REAL_TEXT for c in uniq]) # (U,)
         sel_cols = np.stack([selections[i] for i in first]) # (U,4,5)
 
-        # pairs of caption j are all on in image i
+        # the pair of caption j is on in image i
         subset = ~(sel_cols[None] & ~lab[:, None]).any(axis=(2, 3)) # (B,U)
         Y = np.where(is_real_col[None], ~is_fake[:, None], is_fake[:, None] & subset)
         W = np.where(is_real_col, self.real_text_weight, self.fake_text_weight)
@@ -108,5 +101,4 @@ class DeepClipCollate:
             "Y": torch.from_numpy(Y).float(),
             "W": torch.from_numpy(np.broadcast_to(W, Y.shape).copy()).float(),
             "pair_targets": torch.from_numpy(lab.reshape(len(batch), -1)).long(),
-            "pair_counts": torch.from_numpy(np.stack(selections).reshape(len(batch), -1).sum(axis=0)).long(),
         }
