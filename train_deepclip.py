@@ -1,7 +1,7 @@
 import os
-import csv
 import argparse
 from pathlib import Path
+import wandb
 import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
@@ -20,14 +20,13 @@ from deepclip.data import (
     get_valid_transforms,
 )
 from deepclip.data.text import pair_frequency, region_frequency, type_weights, region_weights
-from deepclip.losses import itc_loss, cls_loss, uncertainty_weighting
+from deepclip.losses import itc_loss
 from deepclip.utils import (
     seed_everything,
     AverageMeter,
     build_metrics,
     to_two_class,
     PairAveragePrecision,
-    PAIR_NAMES,
     EarlyStopping,
 )
 from deepclip.optimizer import build_optimizer
@@ -39,9 +38,10 @@ s_ = Style.BRIGHT
 r_ = Style.RESET_ALL
 
 ROOT_DIR = Path(__file__).resolve().parent
+DATASET = "ff++"
 
 class Trainer:
-    """DeepClip Training: itc_loss + cls_loss with uncertainty weighting"""
+    """DeepClip Training: one loss (sigmoid image-text contrastive). Real/fake metrics use p_fake = 1 - p_real"""
 
     def __init__(self, model, cfg):
 
@@ -51,12 +51,10 @@ class Trainer:
 
         # ======= Loss =======
         self.ckpt_saved = False # a _best.pt of an earlier run must not be loaded
-        self.train_cls_loss = AverageMeter()
-        self.train_itc_loss = AverageMeter()
-        self.valid_cls_loss = AverageMeter()
-        self.valid_itc_loss = AverageMeter()
+        self.train_epoch_loss = AverageMeter()
+        self.valid_epoch_loss = AverageMeter()
 
-        # ======= Early Stopping (valid cls_loss) ======
+        # ======= Early Stopping (valid_loss) ======
         self.early_stopping = EarlyStopping(
             patience = cfg.train.patience,
             min_delta = cfg.train.min_delta,
@@ -66,9 +64,8 @@ class Trainer:
         base_metrics = build_metrics(cfg.device)
         self.train_metrics = base_metrics.clone(prefix="train_")
         self.valid_metrics = base_metrics.clone(prefix="valid_")
-        self.train_pair_ap = PairAveragePrecision(cfg.device)
-        self.valid_pair_ap = PairAveragePrecision(cfg.device)
-        self.pair_counts = torch.zeros(len(PAIR_NAMES), dtype=torch.long)
+        self.train_ap = PairAveragePrecision(cfg.device)
+        self.valid_ap = PairAveragePrecision(cfg.device)
 
         # ======= Optimizer =======
         self.optimizer = build_optimizer(self.model, cfg)
@@ -77,9 +74,11 @@ class Trainer:
         # ======= Scheduler ========
         self.scheduler = fetch_scheduler(self.optimizer, cfg)
 
-        # ======= Log ========
-        self.log_path = Path(cfg.output_dir) / f"{cfg.model_name}_log.csv"
+        # ======= Checkpoint ========
         self.ckpt_path = Path(cfg.output_dir) / f"{cfg.model_name}_best.pt"
+
+        # ======= Gradient Watch =======
+        wandb.watch(self.model, log='all', log_freq=100)
 
         print(f"{c_}{s_}\n✅ Trainer initialized | Device: {cfg.device}\n{r_}")
 
@@ -90,8 +89,6 @@ class Trainer:
             caption_to_idx = self.model.caption_to_idx,
             type_weights = type_weights(pair_frequency(pair_labels), self.cfg.text.type_sampling_alpha),
             region_weights = region_weights(region_frequency(pair_labels), self.cfg.text.region_sampling_beta),
-            max_regions = self.model.max_regions,
-            max_types = self.model.max_types,
             real_text_weight = self.cfg.loss.real_text_weight,
             fake_text_weight = self.cfg.loss.fake_text_weight,
             seed = seed,
@@ -119,14 +116,17 @@ class Trainer:
                 collate_fn = collate,
         )
 
-    def _write_log(self, row):
-        new_file = not self.log_path.exists()
+    def _save_checkpoint(self, epoch, valid_out):
 
-        with open(self.log_path, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=list(row))
-            if new_file:
-                writer.writeheader()
-            writer.writerow(row)
+        torch.save(self.model.state_dict(), self.ckpt_path)
+
+        artifact = wandb.Artifact(
+            name = self.cfg.wandb_artifact_name,
+            type = 'model',
+            metadata = {"epoch": epoch, **valid_out},
+            )
+        artifact.add_file(str(self.ckpt_path))
+        wandb.log_artifact(artifact, aliases=['best'])
 
     def fit(self, train_df, valid_df):
         # ====== Calculate Ratio Real[0]/Fake[1] ======
@@ -140,9 +140,6 @@ class Trainer:
 
         # ====== Valid DataLoader ======
         valid_loader = self._loader(valid_df, get_valid_transforms, self.cfg.train.valid_bs, False, valid_collate)
-
-        if self.log_path.exists():
-            self.log_path.unlink()
 
         print(f"{c_}{s_}\n🚀 Starting Training for {self.cfg.train.epochs}...{r_}")
         for epoch in range(1, self.cfg.train.epochs + 1):
@@ -160,7 +157,7 @@ class Trainer:
             train_out = self.train_one_epoch(train_loader)
             valid_collate.reset()
             valid_out = self.valid_one_epoch(valid_loader)
-            valid_loss = valid_out["valid_cls_loss"]
+            train_loss, valid_loss = train_out["train_loss"], valid_out["valid_loss"]
 
             # ====== Scheduler ======
             if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -168,27 +165,19 @@ class Trainer:
             else:
                 self.scheduler.step()
 
-            # ====== Loss weights and temperatures ======
-            scalars = {
-                "w_cls_loss": torch.exp(-self.model.s_cls).item(),
-                "w_itc_loss": torch.exp(-self.model.s_itc).item(),
-                "t_cls": self.model.t_cls.exp().item(),
-                "t_itc": self.model.t_itc.exp().item(),
-                "b_itc": self.model.b_itc.item(),
-            }
-            print(f"⚖️  w_cls_loss={scalars['w_cls_loss']:.4f}, w_itc_loss={scalars['w_itc_loss']:.4f} | "
-                  f"t_cls={scalars['t_cls']:.2f}, t_itc={scalars['t_itc']:.2f}, b_itc={scalars['b_itc']:.2f}")
+            # ====== Temperature ======
+            t_itc = self.model.t_itc.exp().item()
+            b_itc = self.model.b_itc.item()
+            print(f"🌡️  t_itc={t_itc:.2f}, b_itc={b_itc:.2f}")
 
-            # ====== CSV Logging ======
-            self._write_log({
+            # ====== Wandb Logging ======
+            wandb.log({
                 "epoch": epoch,
                 "lr": lr,
-                **{k: v for k, v in train_out.items() if k != "train_pair_ap"},
-                **{k: v for k, v in valid_out.items() if k != "valid_pair_ap"},
-                **scalars,
-                **{f"train_ap_{k}": v for k, v in train_out["train_pair_ap"].items()},
-                **{f"valid_ap_{k}": v for k, v in valid_out["valid_pair_ap"].items()},
-                **{f"count_{k}": v for k, v in zip(PAIR_NAMES, self.pair_counts.tolist())},
+                "t_itc": t_itc,
+                "b_itc": b_itc,
+                **train_out,
+                **valid_out,
             })
 
             # ====== Checkpoint ======
@@ -197,9 +186,11 @@ class Trainer:
             stop = self.early_stopping(valid_loss)
 
             if self.early_stopping.improved:
-                print(f"✅ valid_cls_loss improved ({prev_best:.4f} → {valid_loss:.4f})")
-                torch.save(self.model.state_dict(), self.ckpt_path)
+                print(f"✅ valid_loss improved ({prev_best:.4f} → {valid_loss:.4f})")
+                self._save_checkpoint(epoch, valid_out)
                 self.ckpt_saved = True
+
+            print(f"{c_}{s_}📉 Train Loss: {train_loss:.4f} | Valid Loss: {valid_loss:.4f}{r_}")
 
             # ====== Early Stopping ======
             if stop:
@@ -207,7 +198,7 @@ class Trainer:
                 break
 
         if not self.ckpt_saved:
-            raise RuntimeError("valid_cls_loss never improved (NaN?), so no checkpoint was saved")
+            raise RuntimeError("valid_loss never improved (NaN?), so no checkpoint was saved")
 
         self.model.load_state_dict(torch.load(self.ckpt_path, map_location=self.cfg.device))
         return self.model
@@ -220,41 +211,44 @@ class Trainer:
         W = batch["W"].to(self.cfg.device) # (B,U)
 
         img_emb = self.model.encode_image(imgs) # (B,D)
-        itc = itc_loss(self.model.itc_logits(img_emb, text_idx), Y, W)
-        cls_logits = self.model.cls_logits(img_emb) # (B,)
-        cls = cls_loss(cls_logits, labels)
+        loss = itc_loss(self.model.itc_logits(img_emb, text_idx), Y, W)
 
-        return img_emb, cls_logits, labels, itc, cls
+        return img_emb, labels, loss
 
-    def _update_metrics(self, metrics, pair_ap, img_emb, cls_logits, labels, batch):
+    def _update_metrics(self, metrics, ap, img_emb, labels, batch):
         with torch.no_grad():
-            p_fake = torch.sigmoid(cls_logits.detach().float())
+            # outside autocast: img_emb may be fp16 and text_table is fp32
+            img_emb = img_emb.detach().float()
+
+            # p_fake = 1 - p_real of the REAL_TEXT column
+            p_fake = torch.sigmoid(self.model.real_fake_logits(img_emb)) # (B,)
             metrics.update(to_two_class(p_fake), labels.long())
 
-            # outside autocast: img_emb may be fp16 and text_table is fp32
-            pair_scores = torch.sigmoid(self.model.pair_logits(img_emb.detach().float())) # (B,20)
-            pair_ap.update(pair_scores, batch["pair_targets"].to(self.cfg.device))
+            pair_scores = torch.sigmoid(self.model.pair_logits(img_emb)) # (B,20)
+            ap.update(pair_scores, batch["pair_targets"].to(self.cfg.device))
+
+    @staticmethod
+    def _ap_out(ap, prefix):
+        """map and the 9 AP of the epoch, e.g. train_map, train_ap_face, ..., train_ap_blend"""
+        ap_map, aps = ap.compute()
+        return {f"{prefix}map": ap_map, **{f"{prefix}{name}": v for name, v in aps.items()}}
 
     def train_one_epoch(self, loader):
         self.model.train()
 
         # ====== reset loss, metric ======
-        self.train_cls_loss.reset()
-        self.train_itc_loss.reset()
+        self.train_epoch_loss.reset()
         self.train_metrics.reset()
-        self.train_pair_ap.reset()
-        self.pair_counts.zero_()
+        self.train_ap.reset()
 
         pbar = tqdm(enumerate(loader), total=len(loader), desc=f"Training for {self.cfg.dataset}")
         for step, batch in pbar:
 
             # ====== Auto Mixed Precision ======
             with torch.amp.autocast(device_type="cuda", enabled=self.use_amp):
-                img_emb, cls_logits, labels, itc, cls = self._forward(batch)
-                loss = uncertainty_weighting(itc, cls, self.model.s_itc, self.model.s_cls)
-                loss = loss / self.cfg.train.n_accumulate
+                img_emb, labels, loss = self._forward(batch)
 
-            self.scaler.scale(loss).backward()
+            self.scaler.scale(loss / self.cfg.train.n_accumulate).backward()
 
             # ====== Gradient Accumulation ======
             if (step + 1) % self.cfg.train.n_accumulate == 0 or (step + 1) == len(loader):
@@ -264,10 +258,8 @@ class Trainer:
                 self.model.clamp_logit_scales_()
 
             n = labels.size(0)
-            self.train_cls_loss.update(cls.item(), n)
-            self.train_itc_loss.update(itc.item(), n)
-            self._update_metrics(self.train_metrics, self.train_pair_ap, img_emb, cls_logits, labels, batch)
-            self.pair_counts += batch["pair_counts"]
+            self.train_epoch_loss.update(loss.item(), n)
+            self._update_metrics(self.train_metrics, self.train_ap, img_emb, labels, batch)
 
             avg_metrics = self.train_metrics.compute()
 
@@ -276,8 +268,7 @@ class Trainer:
 
             # ====== Display Info ======
             postfix = {
-                'train_cls_loss': f'{self.train_cls_loss.avg:.4f}',
-                'train_itc_loss': f'{self.train_itc_loss.avg:.4f}',
+                'train_loss': f'{self.train_epoch_loss.avg:.4f}',
                 'train_acc': f'{avg_metrics["train_acc"]:.4f}',
                 'train_auc': f'{avg_metrics["train_auc"]:.4f}',
                 'train_f1': f'{avg_metrics["train_f1"]:.4f}',
@@ -285,20 +276,18 @@ class Trainer:
                 'gpu_mem': f'{mem:.1f} GB',
             }
 
-            # pair_map is only computed at the end of the epoch
+            # map and the AP are only computed at the end of the epoch
             if (step + 1) == len(loader):
-                pair_map, pair_ap = self.train_pair_ap.compute()
-                postfix['train_pair_map'] = f'{pair_map:.4f}'
+                ap_out = self._ap_out(self.train_ap, "train_")
+                postfix.update({k: f'{v:.4f}' for k, v in ap_out.items()})
 
             pbar.set_postfix(**postfix)
 
         torch.cuda.empty_cache()
         return {
-            "train_cls_loss": self.train_cls_loss.avg,
-            "train_itc_loss": self.train_itc_loss.avg,
+            "train_loss": self.train_epoch_loss.avg,
             **{k: v.item() for k, v in avg_metrics.items()},
-            "train_pair_map": pair_map,
-            "train_pair_ap": pair_ap,
+            **ap_out,
         }
 
     @torch.no_grad()
@@ -306,21 +295,19 @@ class Trainer:
         self.model.eval()
 
         # ====== reset loss, metric ======
-        self.valid_cls_loss.reset()
-        self.valid_itc_loss.reset()
+        self.valid_epoch_loss.reset()
         self.valid_metrics.reset()
-        self.valid_pair_ap.reset()
+        self.valid_ap.reset()
 
         pbar = tqdm(enumerate(loader), total=len(loader), desc=f"Validation for {self.cfg.dataset}")
         for step, batch in pbar:
 
             with torch.amp.autocast(device_type="cuda", enabled=self.use_amp):
-                img_emb, cls_logits, labels, itc, cls = self._forward(batch)
+                img_emb, labels, loss = self._forward(batch)
 
             n = labels.size(0)
-            self.valid_cls_loss.update(cls.item(), n)
-            self.valid_itc_loss.update(itc.item(), n)
-            self._update_metrics(self.valid_metrics, self.valid_pair_ap, img_emb, cls_logits, labels, batch)
+            self.valid_epoch_loss.update(loss.item(), n)
+            self._update_metrics(self.valid_metrics, self.valid_ap, img_emb, labels, batch)
 
             avg_metrics = self.valid_metrics.compute()
 
@@ -329,8 +316,7 @@ class Trainer:
 
             # ====== Display Info ======
             postfix = {
-                'valid_cls_loss': f'{self.valid_cls_loss.avg:.4f}',
-                'valid_itc_loss': f'{self.valid_itc_loss.avg:.4f}',
+                'valid_loss': f'{self.valid_epoch_loss.avg:.4f}',
                 'valid_acc': f'{avg_metrics["valid_acc"]:.4f}',
                 'valid_auc': f'{avg_metrics["valid_auc"]:.4f}',
                 'valid_f1': f'{avg_metrics["valid_f1"]:.4f}',
@@ -338,18 +324,16 @@ class Trainer:
             }
 
             if (step + 1) == len(loader):
-                pair_map, pair_ap = self.valid_pair_ap.compute()
-                postfix['valid_pair_map'] = f'{pair_map:.4f}'
+                ap_out = self._ap_out(self.valid_ap, "valid_")
+                postfix.update({k: f'{v:.4f}' for k, v in ap_out.items()})
 
             pbar.set_postfix(**postfix)
 
         torch.cuda.empty_cache()
         return {
-            "valid_cls_loss": self.valid_cls_loss.avg,
-            "valid_itc_loss": self.valid_itc_loss.avg,
+            "valid_loss": self.valid_epoch_loss.avg,
             **{k: v.item() for k, v in avg_metrics.items()},
-            "valid_pair_map": pair_map,
-            "valid_pair_ap": pair_ap,
+            **ap_out,
         }
 
     def __str__(self):
@@ -360,13 +344,14 @@ def main():
     parser = argparse.ArgumentParser(description="DeepClip Training")
 
     parser.add_argument("--root-dir", required=True)
-    parser.add_argument("--model-name", default="deepclip_b0_r2_t2", choices=available_models())
+    parser.add_argument("--model-name", default="deepclip_b0", choices=available_models())
     parser.add_argument("--config", default=None, help="yaml file (default: deepclip/config/deepclip_{b0,b5}.yaml from --model-name)")
-    parser.add_argument("--output-dir", default=".", help="Directory of the best checkpoint and the log csv")
+    parser.add_argument("--output-dir", default=".", help="Directory of the best checkpoint")
 
     parser.add_argument("--seed", default=2025, type=int)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--num-workers", default=max(os.cpu_count() - 1, 0), type=int)
+    parser.add_argument("--wandb-api-key", required=True)
 
     # Metadata
     parser.add_argument("--metadata", default="train_clip_frame_metadata.csv", type=str)
@@ -401,16 +386,29 @@ def main():
 
     # ==================== Build Dataset ==================================
     train_df, valid_df = split_data(meta_df=meta_df, seed=args.seed, label_col=args.label_col,
-                                    ori_vid=args.ori_vid_col, dataset="ff++", debug=args.debug)
+                                    ori_vid=args.ori_vid_col, dataset=DATASET, debug=args.debug)
 
     # ==================== Build Model ===============================
     model = getattr(models, args.model_name)(**OmegaConf.to_container(cfg.model, resolve=True))
     print(f"📝 Text table: {model.num_captions} captions × {model.embed_dim} "
           f"({model.clip_name} text, built in {model.text_table_time:.1f}s)")
 
+    # =================== Setting Weighted & Bias ======================
+    wandb.login(key=args.wandb_api_key)
+    cfg.wandb_artifact_name = (f"{args.model_name}_a{cfg.text.type_sampling_alpha}"
+                               f"_b{cfg.text.region_sampling_beta}")
+
+    run = wandb.init(
+        project = f"deepclip_{DATASET}",
+        name = cfg.wandb_artifact_name,
+        config = OmegaConf.to_container(cfg, resolve=True),
+    )
+
     # =================== Training ============================
     trainer = Trainer(model, cfg)
     trainer.fit(train_df, valid_df)
+
+    run.finish()
 
 if __name__ == "__main__":
     main()
