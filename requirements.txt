@@ -24,6 +24,7 @@ omegaconf>=2.3.0
 # --- [Utilities] ---
 tqdm>=4.60.0
 colorama>=0.4.6
+wandb>=0.17.0
 
 # --- [Linting & Formatting] ---
 ruff>=0.16.8
