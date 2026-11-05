@@ -6,7 +6,7 @@ def build_optimizer(model: nn.Module, cfg):
     Two parameter groups with the same lr (open_clip convention):
         decay    : weights with 2 or more dimensions (conv, linear kernels)          -> cfg.train.weight_decay
         no_decay : 1 dimensional and scalar parameters (norm weights, biases,
-                   BatchNorm, t_itc, b_itc, t_cls, s_itc, s_cls)                      -> 0
+                   BatchNorm, t_itc, b_itc)                                           -> 0
     The frozen text encoder is not a part of DeepClip, so it is never in the optimizer.
     """
 
