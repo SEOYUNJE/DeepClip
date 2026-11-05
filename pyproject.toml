@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # ─────────────────────────────────────────────
 [project]
 name = "deepclip"            # pip install deepclip 할 때 이 이름
-version = "0.1.0"
+version = "1.0.0"
 description = "CLIP for deepfakes: face forgery detection aligned with CLIP text embeddings"
 readme = "README.md"         # PyPI 페이지에 표시될 설명 (마크다운)
 requires-python = ">=3.10"   # `int | None` 문법 + torch 하한
