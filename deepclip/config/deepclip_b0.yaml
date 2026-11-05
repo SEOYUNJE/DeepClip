@@ -38,15 +38,15 @@ model:
       embed_dim: 512 # Text embedding dimension of clip_name (checked)
 
 text:
-      type_sampling_alpha: 1.0 # Type weight = freq^-alpha
+      type_sampling_alpha: 1.5 # Type weight = freq^-alpha
       region_sampling_beta: 1.0 # Region weight = region_freq^-beta
 
 loss:
       real_text_weight: 1.0 # Weight of the REAL_TEXT column of the loss
-      fake_text_weight: 1.0 # Weight of the FAKE caption columns of the loss
+      fake_text_weight: 1.5 # Weight of the FAKE caption columns of the loss
 
 train:
-      epochs: 10
+      epochs: 100
       use_amp: True # Mixed Precision Training
       n_accumulate: 1 # Gradient Accumulation steps
       optimizer: "AdamW"
