@@ -11,22 +11,14 @@ from .models.image_encoder import DeepImageEncoder
 from .models.text_encoder import DeepTextEncoder
 from .models.deepclip import (
     DeepClip,
-    deepclip_b0_r1_t1,
-    deepclip_b0_r1_t2,
-    deepclip_b0_r2_t2,
-    deepclip_b5_r1_t1,
-    deepclip_b5_r1_t2,
-    deepclip_b5_r2_t2,
+    deepclip_b0,
+    deepclip_b5,
 )
 
 __all__ = [
     "DeepImageEncoder",
     "DeepTextEncoder",
     "DeepClip",
-    "deepclip_b0_r1_t1",
-    "deepclip_b0_r1_t2",
-    "deepclip_b0_r2_t2",
-    "deepclip_b5_r1_t1",
-    "deepclip_b5_r1_t2",
-    "deepclip_b5_r2_t2",
+    "deepclip_b0",
+    "deepclip_b5",
 ]

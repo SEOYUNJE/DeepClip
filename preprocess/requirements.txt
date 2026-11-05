@@ -1,0 +1,19 @@
+# Packages of the preprocessing pipeline only (preprocess/Dockerfile installs this file).
+# Exact versions so that a rebuild installs the same packages. They are wheels for Python 3.11 on Linux
+# (the base images of the Dockerfile). torch / torchvision come from the base image, not from this file.
+
+# --- [Data Analysis & Math] ---
+numpy==2.4.6
+pandas==3.0.5
+pyarrow==26.0.0
+scipy==1.17.1
+
+# --- [Computer Vision & Image Processing] ---
+opencv-python==5.0.0.93
+scikit-image==0.26.0
+dlib==20.0.1
+ultralytics==8.4.105
+
+# --- [Utilities] ---
+tqdm==4.69.1
+colorama==0.4.6

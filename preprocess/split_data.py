@@ -93,7 +93,7 @@ def split_metadata(meta_df: pd.DataFrame, root_dir: str):
 def main():
     parser = argparse.ArgumentParser(description="Generating Train, Test MetaData")
     parser.add_argument("--root-dir", required=True, help="Root Directory with FF++")
-    parser.add_argument("--print-info", default=True, type=bool, help="Display MetaData")
+    parser.add_argument("--print-info", default=True, action=argparse.BooleanOptionalAction, help="Display MetaData (--no-print-info to hide it)")
     
     args = parser.parse_args()
     

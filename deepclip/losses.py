@@ -1,4 +1,3 @@
-import torch
 import torch.nn.functional as F
 
 def itc_loss(logits, Y, W):
@@ -15,21 +14,3 @@ def itc_loss(logits, Y, W):
 
     loss = F.binary_cross_entropy_with_logits(logits.float(), Y, weight=W, reduction="none")
     return loss.sum(dim=1).mean()
-
-def cls_loss(logits, labels):
-    """
-    Real/fake loss. logits = t_cls * (cos_fake - cos_real), which is the same as the 2-way softmax
-    of the REAL_TEXT and FAKE_TEXT logits.
-
-    logits: (B,), labels: (B,) 0: REAL, 1: FAKE
-    """
-
-    return F.binary_cross_entropy_with_logits(logits.float(), labels)
-
-def uncertainty_weighting(itc, cls, s_itc, s_cls):
-    """
-    Uncertainty weighting (Kendall et al., CVPR 2018): exp(-s) * L + s for each loss.
-    The weight exp(-s) is learned and cannot collapse to 0, because s grows when the weight shrinks.
-    """
-
-    return torch.exp(-s_itc) * itc + s_itc + torch.exp(-s_cls) * cls + s_cls

@@ -3,7 +3,6 @@ from .template import (
     TYPES,
     PAIR_ORDER,
     REAL_TEXT,
-    FAKE_TEXT,
     parse_pair_label,
     pair_frequency,
     region_frequency,
