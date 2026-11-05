@@ -1,5 +1,11 @@
 import warnings
 import logging
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("deepclip") # pyproject.toml
+except PackageNotFoundError: # Not installed (e.g. run from the repository)
+    __version__ = "0.0.0"
 
 # ------- 로그 및 경고 제어 ---------
 warnings.filterwarnings("ignore") # 일반 경고 숨기기
@@ -16,6 +22,7 @@ from .models.deepclip import (
 )
 
 __all__ = [
+    "__version__",
     "DeepImageEncoder",
     "DeepTextEncoder",
     "DeepClip",
