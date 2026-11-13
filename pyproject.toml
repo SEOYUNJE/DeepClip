@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # ─────────────────────────────────────────────
 [project]
 name = "deepclip"            # pip install deepclip 할 때 이 이름
-version = "1.0.0"
+version = "1.1.0"
 description = "CLIP for deepfakes: face forgery detection aligned with CLIP text embeddings"
 readme = "README.md"         # PyPI 페이지에 표시될 설명 (마크다운)
 requires-python = ">=3.10"   # `int | None` 문법 + torch 하한
@@ -35,6 +35,11 @@ dependencies = [
     "pandas>=2.2.3",
     "scikit-learn>=1.6.1",
     "regex>=2023.0.0",       # CLIP tokenizer
+]
+# deepclip.detect 의 얼굴 탐지 (YOLO): pip install deepclip[detect]
+[project.optional-dependencies]
+detect = [
+    "ultralytics>=8.4.41",
 ]
 [project.urls]
 Homepage = "https://github.com/SEOYUNJE/DeepClip"
