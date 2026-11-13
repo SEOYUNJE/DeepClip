@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"] # SPDX license 표기 지원
+build-backend = "setuptools.build_meta"
+# ─────────────────────────────────────────────
+# [project]
+# PyPI에 올라가는 패키지 메타데이터
+# pip install deepclip 했을 때 보이는 정보들
+# ─────────────────────────────────────────────
+[project]
+name = "deepclip"            # pip install deepclip 할 때 이 이름
+version = "1.0.0"
+description = "CLIP for deepfakes: face forgery detection aligned with CLIP text embeddings"
+readme = "README.md"         # PyPI 페이지에 표시될 설명 (마크다운)
+requires-python = ">=3.10"   # `int | None` 문법 + torch 하한
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "seoyunje", email = "seoyunje2001@gmail.com" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# deepclip/ 내부 import 기준 (preprocess, train_deepclip.py 전용 패키지는 제외)
+dependencies = [
+    "torch>=2.4.0",          # nn.RMSNorm
+    "timm>=1.0.0",
+    "torchmetrics>=1.4.0",
+    "albumentations>=2.0.8",
+    "opencv-python>=5.0.0.93",
+    "numpy>=1.23.0,<3.0.0",
+    "pandas>=2.2.3",
+    "scikit-learn>=1.6.1",
+    "regex>=2023.0.0",       # CLIP tokenizer
+]
+[project.urls]
+Homepage = "https://github.com/SEOYUNJE/DeepClip"
+"Bug Tracker" = "https://github.com/SEOYUNJE/DeepClip/issues"
+"Source Code" = "https://github.com/SEOYUNJE/DeepClip"
+Releases = "https://github.com/SEOYUNJE/DeepClip/releases"
+[tool.setuptools.packages.find]
+include = ["deepclip*"]      # deepclip 폴더만 배포
+[tool.setuptools.package-data]
+deepclip = [
+    "data/text/*.gz",        # CLIP BPE vocab (tokenizer가 런타임에 읽음)
+    "config/*.yaml",
+]

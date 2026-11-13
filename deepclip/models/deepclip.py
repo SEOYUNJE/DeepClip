@@ -32,9 +32,12 @@ def _cfg(url='', **kwargs):
         **kwargs
     }
 
+# Pretrained weights (pretrained=True) are assets of the GitHub release
+RELEASE_URL = "https://github.com/SEOYUNJE/DeepClip/releases/download/v1.0.0"
+
 default_cfgs = {
-    'deepclip_b0': _cfg(input_size = (3,224,224)),
-    'deepclip_b5': _cfg(input_size = (3,384,384)),
+    'deepclip_b0': _cfg(url = f'{RELEASE_URL}/deepclip_b0.pt', input_size = (3,224,224)),
+    'deepclip_b5': _cfg(url = f'{RELEASE_URL}/deepclip_b5.pt', input_size = (3,384,384)),
 }
 
 def available_models() -> List[str]:
