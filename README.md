@@ -10,12 +10,17 @@
 </p>
 
 <p align="center">
+  <img src="assets/deepclip_architecture.png" alt="DeepClip architecture" width="100%">
+</p>
+
+<p align="center">
   <b>CLIP for deepfakes</b> — face forgery detection aligned with CLIP text embeddings
 </p>
 
 ## 📌 Contents
 
 - [💡 What DeepClip Predicts](#-what-deepclip-predicts) - Fake probability plus 20 artifact scores (4 face regions × 5 artifact types)
+- [🏗️ Architecture](#-architecture) - DeepGuard's MS-Eff-GCViT image encoder aligned with frozen CLIP text embeddings
 - [🧬 Model Zoo](#-model-zoo) - `deepclip_b0` and `deepclip_b5`
 - [📦 Installation](#-installation) - `pip install deepclip` for inference, or the full repo for training
 - [🔮 Predict Image & Video](#-predict-image--video) - Detect deepfakes and their artifacts with `deepclip.detect`
@@ -37,12 +42,24 @@ forgery the model sees.
 - **Fake probability**: `1 - p_real`, where `p_real` is the score of the caption *"a photo of a real face."*
 - **Artifact scores**: 4 regions × 5 types = 20 captions such as *"... blending artifacts on the mouth"*, each a probability in `[0, 1]`.
 
+## 🏗️ Architecture
+
+DeepClip combines the **MS-Eff-GCViT** image encoder of [DeepGuard](https://github.com/HanMoonSub/DeepGuard) with the
+text encoder of **CLIP**.
+
+- **(1) Training**: every fake face gets a caption built from one (region, artifact type) pair sampled from its
+  `pair_label`. The image encoder (trainable) is aligned with the frozen CLIP text embeddings with a multi-positive
+  sigmoid loss (SigLIP). The 21 caption embeddings are computed once and kept in a table, so the text encoder is not
+  run during training.
+- **(2) Inference**: the similarity to *"a photo of a real face."* gives the fake probability, and the similarity to
+  the 20 region–artifact captions gives the artifact map.
+
 ## 🧬 Model Zoo
 
-| Model | Resolution | Image Backbone | Text Encoder | Model Config | Download |
-| ----- | ---------- | -------------- | ------------ | ------------ | -------- |
-| ⚡ deepclip_b0 | 224 X 224 | tf_efficientnet_b0 + GCViT | CLIP ViT-B/16 (frozen) | [spec](deepclip/config/deepclip_b0.yaml) | [model](https://github.com/SEOYUNJE/DeepClip/releases/download/v1.0.0/deepclip_b0.pt) |
-| 🔥 deepclip_b5 | 384 X 384 | tf_efficientnet_b5 + GCViT | CLIP ViT-L/14 (frozen) | [spec](deepclip/config/deepclip_b5.yaml) | [model](https://github.com/SEOYUNJE/DeepClip/releases/download/v1.0.0/deepclip_b5.pt) |
+| Model | Resolution | Image Encoder | Text Encoder | Params | FLOPs | Model Config |
+| ----- | ---------- | ------------- | ------------ | ------ | ----- | ------------ |
+| ⚡ deepclip_b0 | 224 X 224 | ms_eff_gcvit_b0 | CLIP ViT-B/16 (frozen) | 8.82M | 0.83G | [spec](deepclip/config/deepclip_b0.yaml) |
+| 🔥 deepclip_b5 | 384 X 384 | ms_eff_gcvit_b5 | CLIP ViT-L/14 (frozen) | 50.61M | 13.26G | [spec](deepclip/config/deepclip_b5.yaml) |
 
 The pretrained weights are downloaded automatically with `timm.create_model(model_name, pretrained=True)`.
 
@@ -211,21 +228,6 @@ macro F1, the confusion matrix and per-class precision / recall / F1.
 
 The final fake probability of a video is rule-based: `max(prob, S_art)`, where `S_art` is the sigmoid of the mean
 of the top-k artifact logits. Artifacts can only raise the fake probability, never lower it.
-
-`DATA_ROOT` must contain the test metadata of each dataset (`label` is `REAL` / `FAKE`):
-
-```Plaintext
-DATA_ROOT/
-├── Celeb_DF(v2)/
-│   ├── test_metadata.csv          # vid, source, label
-│   └── {source}/{vid}.mp4
-├── FF++/
-│   ├── test_metadata.csv
-│   └── {source}/{vid}.mp4
-└── kodf/
-    ├── test_metadata.csv
-    └── {source}/{pid}/{vid}.mp4
-```
 
 ## ⚖️ License
 
