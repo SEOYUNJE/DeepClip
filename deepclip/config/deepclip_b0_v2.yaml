@@ -31,9 +31,9 @@ model:
       h_drop_path: 0.05 # Stochastic depth rate (High)
 
       # ===== Cross Attention (Q: high tokens, K/V: low tokens) =====
-      x_depth: 1 # Number of cross attention blocks
+      x_depth: 2 # Number of cross attention blocks
       x_heads: 4 # Heads of the cross attention
-      x_ratio: 4 # MLP expansion ratio of the cross attention blocks
+      x_ratio: 3 # MLP expansion ratio of the cross attention blocks
       x_drop: 0.05 # Proj dropout, Mlp dropout of the cross attention blocks
       x_attn_drop: 0 # Attention dropout of the cross attention blocks
       x_drop_path: 0.05 # Stochastic depth rate of the cross attention blocks

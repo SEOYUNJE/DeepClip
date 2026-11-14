@@ -217,9 +217,9 @@ class DeepImageEncoder(nn.Module):
 IMAGE_ENCODER_V2_CFGS = {
     "b0": dict(
         **IMAGE_ENCODER_CFGS["b0"],
-        x_depth=1,
+        x_depth=2,
         x_heads=4,
-        x_ratio=4,
+        x_ratio=3,
         x_drop=0.05,
         x_attn_drop=0.0,
         x_drop_path=0.05,
@@ -227,7 +227,7 @@ IMAGE_ENCODER_V2_CFGS = {
     ),
     "b5": dict(
         **IMAGE_ENCODER_CFGS["b5"],
-        x_depth=1,
+        x_depth=2,
         x_heads=16,
         x_ratio=3,
         x_drop=0.1,
