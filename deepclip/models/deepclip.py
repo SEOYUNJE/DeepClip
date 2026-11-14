@@ -6,7 +6,12 @@ import torch.nn.functional as F
 from typing import List
 from timm.models import register_model, build_model_with_cfg
 from deepclip.data.text import PAIR_ORDER, REAL_TEXT, all_captions, single_pair_caption, tokenize
-from deepclip.models.image_encoder import DeepImageEncoder, IMAGE_ENCODER_CFGS
+from deepclip.models.image_encoder import (
+    DeepImageEncoder,
+    DeepImageEncoderV2,
+    IMAGE_ENCODER_CFGS,
+    IMAGE_ENCODER_V2_CFGS,
+)
 from deepclip.models.text_encoder import DeepTextEncoder
 
 # Same clamp as OpenAI CLIP / open_clip: the logit scale (temperature) is at most 100
@@ -34,10 +39,13 @@ def _cfg(url='', **kwargs):
 
 # Pretrained weights (pretrained=True) are assets of the GitHub release
 RELEASE_URL = "https://github.com/SEOYUNJE/DeepClip/releases/download/v1.0.0"
+RELEASE_URL_V2 = "https://github.com/SEOYUNJE/DeepClip/releases/download/v1.1.0"
 
 default_cfgs = {
     'deepclip_b0': _cfg(url = f'{RELEASE_URL}/deepclip_b0.pt', input_size = (3,224,224)),
     'deepclip_b5': _cfg(url = f'{RELEASE_URL}/deepclip_b5.pt', input_size = (3,384,384)),
+    'deepclip_b0_v2': _cfg(url = f'{RELEASE_URL_V2}/deepclip_b0_v2.pt', input_size = (3,224,224)),
+    'deepclip_b5_v2': _cfg(url = f'{RELEASE_URL_V2}/deepclip_b5_v2.pt', input_size = (3,384,384)),
 }
 
 def available_models() -> List[str]:
@@ -64,6 +72,7 @@ class DeepClip(nn.Module):
     """
 
     REAL_IDX = 0
+    image_encoder_cls = DeepImageEncoder
 
     def __init__(
             self,
@@ -80,7 +89,7 @@ class DeepClip(nn.Module):
             build_text_table: Run the CLIP text encoder to fill text_table. False when text_table is loaded
                 from a DeepClip checkpoint.
             text_device: Device to build text_table on (default: cuda if available).
-            **kwargs: Arguments of DeepImageEncoder.
+            **kwargs: Arguments of image_encoder_cls (DeepImageEncoder, DeepImageEncoderV2 for DeepClipV2).
         """
 
         super().__init__()
@@ -93,7 +102,7 @@ class DeepClip(nn.Module):
         self.clip_name = clip_name
         self.embed_dim = CLIP_EMBED_DIMS[clip_name]
 
-        self.image_encoder = DeepImageEncoder(embed_dim=self.embed_dim, **kwargs)
+        self.image_encoder = self.image_encoder_cls(embed_dim=self.embed_dim, **kwargs)
 
         self.t_itc = nn.Parameter(torch.tensor(math.log(10.)))
         self.b_itc = nn.Parameter(torch.tensor(-10.))
@@ -164,7 +173,16 @@ class DeepClip(nn.Module):
         """(B,3,H,W) -> (B,1) fake logits, same as the output of DeepGuard"""
         return self.real_fake_logits(self.encode_image(x)).unsqueeze(-1)
 
-def _create_deepclip(variant, pretrained=False, **kwargs):
+class DeepClipV2(DeepClip):
+    """
+    DeepClip with DeepImageEncoderV2: the low-level branch (key / value) and the high-level branch (query)
+    are fused by cross attention, and a CLIP attention pool makes the image embedding.
+    Text table, loss and logits are the same as DeepClip.
+    """
+
+    image_encoder_cls = DeepImageEncoderV2
+
+def _create_deepclip(variant, pretrained=False, model_cls=DeepClip, **kwargs):
 
     kwargs.pop('pretrained_cfg', None)
     kwargs.pop('pretrained_cfg_overlay', None)
@@ -178,17 +196,17 @@ def _create_deepclip(variant, pretrained=False, **kwargs):
     kwargs.setdefault('build_text_table', not pretrained)
 
     return build_model_with_cfg(
-        DeepClip,
+        model_cls,
         variant,
         pretrained,
         pretrained_cfg=pretrained_cfg,
         **kwargs
     )
 
-def _model_kwargs(backbone, **kwargs):
+def _model_kwargs(backbone, cfgs=IMAGE_ENCODER_CFGS, **kwargs):
     clip_name = {"b0": "ViT-B/16", "b5": "ViT-L/14"}[backbone]
     # Values in kwargs (e.g. cfg.model of the yaml) override the defaults
-    return {**IMAGE_ENCODER_CFGS[backbone], "clip_name": clip_name, **kwargs}
+    return {**cfgs[backbone], "clip_name": clip_name, **kwargs}
 
 @register_model
 def deepclip_b0(pretrained=False, **kwargs) -> DeepClip:
@@ -197,3 +215,13 @@ def deepclip_b0(pretrained=False, **kwargs) -> DeepClip:
 @register_model
 def deepclip_b5(pretrained=False, **kwargs) -> DeepClip:
     return _create_deepclip("deepclip_b5", pretrained, **_model_kwargs("b5", **kwargs))
+
+@register_model
+def deepclip_b0_v2(pretrained=False, **kwargs) -> DeepClipV2:
+    return _create_deepclip("deepclip_b0_v2", pretrained, model_cls=DeepClipV2,
+                            **_model_kwargs("b0", IMAGE_ENCODER_V2_CFGS, **kwargs))
+
+@register_model
+def deepclip_b5_v2(pretrained=False, **kwargs) -> DeepClipV2:
+    return _create_deepclip("deepclip_b5_v2", pretrained, model_cls=DeepClipV2,
+                            **_model_kwargs("b5", IMAGE_ENCODER_V2_CFGS, **kwargs))
