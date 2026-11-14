@@ -173,7 +173,7 @@ class GCViTLayer(nn.Module):
 class GCViT(nn.Module):
     """
         inp: (B,in_chs,H,W)
-        out: (B,C)
+        out: (B,C) if global_pool else (B,h*w,C)
     """
     def __init__(self,
                 in_chs: int, 
@@ -190,6 +190,7 @@ class GCViT(nn.Module):
                 drop_path: float = 0.,
                 norm_layer: Type[nn.Module] = nn.LayerNorm,
                 layer_scale: int | float | None = None,
+                global_pool: bool = True,
                 **kwargs):
         """
         Args:
@@ -207,9 +208,11 @@ class GCViT(nn.Module):
             drop_path: drop path rate.
             norm_layer: normalization layer.
             layer_scale: layer scaling coefficient.
+            global_pool: average pool the tokens of the last stage (False -> return the tokens).
         """
         
         super().__init__()
+        self.global_pool = global_pool
         num_feats = int(dim * 2 ** (len(depths)-1))
         self.patch_embed = GCViTPatchEmbed(in_chs = in_chs, dim = dim, norm_layer = norm_layer)
         self.pos_drop = nn.Dropout(drop)
@@ -259,6 +262,9 @@ class GCViT(nn.Module):
             x = stage(x) # (B,H,W,D) -> (B,H//2,W//2,2D)
             
         x = self.norm(x)
+        if not self.global_pool:
+            return x.flatten(1, 2) # (B,h,w,C) -> (B,h*w,C)
+
         x = x.permute(0,3,1,2) # (B,h,w,C) -> (B,C,h,w)
         x = self.avgpool(x) # (B,C,1,1)
         x = x.reshape(x.shape[0],-1) #(B,C,1,1) -> (B,C)
