@@ -1,0 +1,76 @@
+dataset: "FaceForensics++"
+
+model:
+      model_name: "tf_efficientnet_b0.ns_jft_in1k"
+      img_size: [224,224]
+
+      # ===== Feature Extraction Blocks =====
+      l_block_idx: 1 # Low-level feature stage index
+      h_block_idx: 6 # High-level feature stage index
+
+      # ===== Transformer Dimensions =====
+      l_dim: 24 # Dimension for low-block transformer
+      h_dim: 256 # Dimension for high-block transformer
+      l_depths: [2,2,4,2] # Number of transformer layers (Low)
+      h_depths: [4] # Number of transformer layers (High)
+
+      # ===== Attention Settings =====
+      l_windows: [7,7,14,7] # Window Size for Attention (Low)
+      h_windows: [7] # Window Size for Attention (High)
+      l_heads: [1,2,4,8] # Multi Head Attention (Low)
+      h_heads: [4] # Multi Head Attention (High)
+      l_ratio: [4,4,4,4] # MLP expansion ratio (Low)
+      h_ratio: [4] # MLP expansion ratio (High)
+
+      # ===== Regularization (Dropout) =====
+      l_drop: 0  # Pos dropout, Mlp dropout, Proj dropout (Low)
+      h_drop: 0.05 # Pos dropout, Mlp dropout, Proj dropout (High)
+      l_attn_drop: 0.05 # Attention Dropout (Low)
+      h_attn_drop: 0 # Attention Dropout (High)
+      l_drop_path: 0.1 # Stochastic depth rate (Low)
+      h_drop_path: 0.05 # Stochastic depth rate (High)
+
+      # ===== Cross Attention (Q: high tokens, K/V: low tokens) =====
+      x_depth: 1 # Number of cross attention blocks
+      x_heads: 4 # Heads of the cross attention
+      x_ratio: 4 # MLP expansion ratio of the cross attention blocks
+      x_drop: 0.05 # Proj dropout, Mlp dropout of the cross attention blocks
+      x_attn_drop: 0 # Attention dropout of the cross attention blocks
+      x_drop_path: 0.05 # Stochastic depth rate of the cross attention blocks
+
+      # ===== Attention Pool (CLIP, query: mean token) =====
+      pool_heads: 4 # Heads of the attention pool
+
+      # ===== Norm (GCViT + cross attention) =====
+      image_norm: "rmsnorm" # rmsnorm or layernorm
+
+      # ===== Text Encoder (frozen) =====
+      clip_name: "ViT-B/16"
+      embed_dim: 512 # Text embedding dimension of clip_name (checked)
+
+text:
+      type_sampling_alpha: 1.5 # Type weight = freq^-alpha
+      region_sampling_beta: 1.0 # Region weight = region_freq^-beta
+
+loss:
+      real_text_weight: 1.0 # Weight of the REAL_TEXT column of the loss
+      fake_text_weight: 1.5 # Weight of the FAKE caption columns of the loss
+
+train:
+      epochs: 100
+      use_amp: True # Mixed Precision Training
+      n_accumulate: 1 # Gradient Accumulation steps
+      optimizer: "AdamW"
+      scheduler: "CosineAnnealingLR"
+
+      # DataLoader
+      train_bs: 16
+      valid_bs: 32
+
+      # Optimizer (decay / no_decay groups, same lr)
+      lr: 2e-4
+      weight_decay: 1e-3
+
+      # Early Stopping (valid_loss)
+      patience: 3
+      min_delta: 0.001
