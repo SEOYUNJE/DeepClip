@@ -345,7 +345,7 @@ def main():
 
     parser.add_argument("--root-dir", required=True)
     parser.add_argument("--model-name", default="deepclip_b0", choices=available_models())
-    parser.add_argument("--config", default=None, help="yaml file (default: deepclip/config/deepclip_{b0,b5}.yaml from --model-name)")
+    parser.add_argument("--config", default=None, help="yaml file (default: deepclip/config/{model_name}.yaml)")
     parser.add_argument("--output-dir", default=".", help="Directory of the best checkpoint")
 
     parser.add_argument("--seed", default=2025, type=int)
@@ -364,8 +364,7 @@ def main():
     args = parser.parse_args()
     seed_everything(args.seed)
 
-    backbone = args.model_name.split("_")[1] # b0 or b5
-    config_path = args.config or ROOT_DIR / "deepclip" / "config" / f"deepclip_{backbone}.yaml"
+    config_path = args.config or ROOT_DIR / "deepclip" / "config" / f"{args.model_name}.yaml"
 
     cfg = OmegaConf.load(config_path)
     cfg.device = "cuda:0" if torch.cuda.is_available() else 'cpu'
