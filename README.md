@@ -24,7 +24,7 @@
 
 - [💡 What DeepClip Predicts](#-what-deepclip-predicts) - Fake probability plus 20 artifact scores (4 face regions × 5 artifact types)
 - [🏗️ Architecture](#-architecture) - DeepGuard's MS-Eff-GCViT image encoder aligned with frozen CLIP text embeddings
-- [🧬 Model Zoo](#-model-zoo) - `deepclip_b0` and `deepclip_b5`
+- [🧬 Model Zoo](#-model-zoo) - `deepclip_b0`, `deepclip_b5` and their LoRA text encoder versions `deepclip_b0_text_ft`, `deepclip_b5_text_ft`
 - [🤗 Try It Live: Hugging Face Spaces](#-try-it-live-hugging-face-spaces) - Upload an image or video to the Hugging Face Space, no install needed
 - [🔮 Predict Image & Video](#-predict-image--video) - Detect deepfakes and their artifacts via the Hugging Face Hub or `deepclip.detect`
 - [🚀 Training](#-training) - Train DeepClip with `train_deepclip.py` and W&B experiment tracking
@@ -54,6 +54,10 @@ text encoder of **CLIP**.
   `pair_label`. The image encoder (trainable) is aligned with the frozen CLIP text embeddings with a multi-positive
   sigmoid loss (SigLIP). The 21 caption embeddings are computed once and kept in a table, so the text encoder is not
   run during training.
+  - **Text fine-tuning (`*_text_ft`)**: the CLIP text encoder is part of the model and is trained with **LoRA**
+    (`lora_r`, `lora_alpha`, `lora_drop`) on the q, k, v and out projections of every text attention block, while the
+    CLIP weights stay frozen. The 21 captions are embedded by the text encoder at every step, so the caption embeddings
+    adapt together with the image encoder.
 - **(2) Inference**: the similarity to *"a photo of a real face."* gives the fake probability, and the similarity to
   the 20 region–artifact captions gives the artifact map.
 
@@ -63,6 +67,12 @@ text encoder of **CLIP**.
 | ----- | ---------- | ------------- | ------------ | ------ | ----- | ------------ |
 | ⚡ deepclip_b0 | 224 X 224 | ms_eff_gcvit_b0 | CLIP ViT-B/16 (frozen) | 8.82M | 0.83G | [spec](deepclip/config/deepclip_b0.yaml) |
 | 🔥 deepclip_b5 | 384 X 384 | ms_eff_gcvit_b5 | CLIP ViT-L/14 (frozen) | 50.61M | 13.26G | [spec](deepclip/config/deepclip_b5.yaml) |
+| ⚡ deepclip_b0_text_ft | 224 X 224 | ms_eff_gcvit_b0 | CLIP ViT-B/16 (LoRA) | 9.22M / 72.64M | 0.83G | [spec](deepclip/config/deepclip_b0_text_ft.yaml) |
+| 🔥 deepclip_b5_text_ft | 384 X 384 | ms_eff_gcvit_b5 | CLIP ViT-L/14 (LoRA) | 51.20M / 174.85M | 13.26G | [spec](deepclip/config/deepclip_b5_text_ft.yaml) |
+
+`*_text_ft` Params are trainable / total: the image encoder and the LoRA weights (r=8: 0.39M for ViT-B/16, 0.59M for
+ViT-L/14) are trained, the CLIP text weights are frozen but saved in the checkpoint. FLOPs are of the image encoder:
+at inference the 21 caption embeddings are computed once and cached.
 
 ## 🤗 Try It Live: Hugging Face Spaces
 
@@ -246,7 +256,7 @@ We recommend **Weights & Biases (W&B)** for experiment tracking (`--wandb-api-ke
 ```python
 !python train_deepclip.py \
     --root-dir DATA_ROOT \
-    --model-name "deepclip_b0" \ # deepclip_b0, deepclip_b5
+    --model-name "deepclip_b0" \ # deepclip_b0, deepclip_b5, deepclip_b0_text_ft, deepclip_b5_text_ft
     --output-dir "checkpoints" \ # Directory of the best checkpoint
     --seed 2025 \ # for reproducibility
     --wandb-api-key "your-api-key" # Write your own api key
@@ -269,8 +279,8 @@ DATA_ROOT/
 | Argument | Default | Description |
 | -------- | ------- | ----------- |
 | `--root-dir` | (required) | Root directory of the dataset |
-| `--model-name` | `deepclip_b0` | `deepclip_b0` or `deepclip_b5` |
-| `--config` | `deepclip/config/deepclip_{b0,b5}.yaml` | Training recipe (model, text sampling, loss, optimizer) |
+| `--model-name` | `deepclip_b0` | `deepclip_b0`, `deepclip_b5`, `deepclip_b0_text_ft` or `deepclip_b5_text_ft` |
+| `--config` | `deepclip/config/{model_name}.yaml` | Training recipe (model, LoRA, text sampling, loss, optimizer) |
 | `--output-dir` | `.` | Directory of the best checkpoint |
 | `--seed` | `2025` | Random seed |
 | `--num-workers` | `cpu_count - 1` | DataLoader workers |
