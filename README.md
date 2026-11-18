@@ -27,6 +27,9 @@
 - [🧬 Model Zoo](#-model-zoo) - `deepclip_b0` and `deepclip_b5`
 - [🤗 Try It Live: Hugging Face Spaces](#-try-it-live-hugging-face-spaces) - Upload an image or video to the Hugging Face Space, no install needed
 - [🔮 Predict Image & Video](#-predict-image--video) - Detect deepfakes and their artifacts via the Hugging Face Hub or `deepclip.detect`
+- [🐳 Building Docker Image](#-building-docker-image) - Build or pull the FF++ preprocessing image
+- [🏃 Running Docker](#-running-docker) - Run the preprocessing pipeline on `DATA_ROOT`
+- [🗂️ Data Preparation](#️-data-preparation) - The 5 preprocessing steps from FF++ videos to annotated face crops
 - [🚀 Training](#-training) - Train DeepClip with `train_deepclip.py` and W&B experiment tracking
 - [📈 Model Evaluation](#-model-evaluation) - Benchmark a pretrained model on deepfake videos with `test_deepclip.py`
 - [⚖️ License](#-license) - MIT license
@@ -228,6 +231,41 @@ result = predictor.predict_video_artifacts(video_path = "path/to/video.mp4", num
 | `conf` | Mean of the confident frames (> 0.8 or < 0.2) when enough frames agree, otherwise mean |
 | `mean` | Mean of all frames |
 | `vote` | Ratio of frames with probability > 0.5 |
+
+## 🐳 Building Docker Image
+
+Build from the repository root (GPU, or CPU with `--build-arg BASE_IMAGE=python:3.11-slim`):
+
+```bash
+docker build -f preprocess/Dockerfile -t deepclip-preprocess:gpu .
+```
+
+Or pull the prebuilt image from [Docker Hub](https://hub.docker.com/r/seoyunje/deepclip-preprocess) (`gpu` / `cpu`):
+
+```bash
+docker pull seoyunje/deepclip-preprocess:gpu
+```
+
+## 🏃 Running Docker
+
+```bash
+docker run --gpus all --shm-size=8g --rm -v <DATA_ROOT>:/data -v deepclip-cache:/root/.cache/deepclip -it seoyunje/deepclip-preprocess:gpu
+```
+
+`<DATA_ROOT>` holds the FF++ videos and `csv/FF++_Metadata.csv`. The weights are downloaded to the `deepclip-cache` volume on the first run.
+Set `STEPS` (e.g. `-e STEPS=3,4,5`) to run only some steps, and `*_ARGS` to override a step's arguments (see [preprocess/README.md](preprocess/README.md#steps-and-arguments)).
+
+## 🗂️ Data Preparation
+
+Download the FaceForensics++ (c23) videos and csv files from [Kaggle](https://www.kaggle.com/datasets/xdxd003/ff-c23) into `DATA_ROOT`. The pipeline runs 5 steps, writing every output to `DATA_ROOT`:
+
+1. `split_data` - train / test metadata
+2. `detect_original_face` - YOLO face boxes of the real videos, reused for their fakes (pixel-aligned pairs)
+3. `crop_face` - face crops of the real and fake videos
+4. `generate_landmark` - dlib 68 landmarks of the fake crops
+5. `raw_annotation` - SSIM forgery masks, forged regions and artifact flags (`raw_annotation.parquet`, `pair_label`)
+
+Without Docker, run each step with `python -m preprocess.<step> --root-dir DATA_ROOT` after `pip install -r preprocess/requirements.txt`. Details in [preprocess/README.md](preprocess/README.md).
 
 ## 🚀 Training
 
