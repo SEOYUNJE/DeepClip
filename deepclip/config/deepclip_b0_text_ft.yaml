@@ -36,9 +36,9 @@ model:
       # ===== Text Encoder (LoRA) =====
       clip_name: "ViT-B/16"
       embed_dim: 512 # Text embedding dimension of clip_name (checked)
-      lora_r: 8 # LoRA rank
-      lora_alpha: 16 # LoRA scale = lora_alpha / lora_r
-      lora_drop: 0.1 # Dropout on the LoRA input
+      lora_r: 4 # LoRA rank
+      lora_alpha: 8 # LoRA scale = lora_alpha / lora_r
+      lora_drop: 0.15 # Dropout on the LoRA input
       lora_targets: [q, k, v, out] # Projections of the text attention with LoRA
 
 text:
@@ -62,7 +62,7 @@ train:
 
       # Optimizer (decay / no_decay groups with lr, text_lora group with text_lr)
       lr: 2e-4
-      text_lr: 2e-4 # lr of the LoRA parameters of the text encoder (no weight decay)
+      text_lr: 5e-5 # lr of the LoRA parameters of the text encoder (no weight decay)
       weight_decay: 1e-3
 
       # Early Stopping (valid_loss)
