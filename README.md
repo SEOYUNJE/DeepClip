@@ -67,12 +67,14 @@ text encoder of **CLIP**.
 | ----- | ---------- | ------------- | ------------ | ------ | ----- | ------------ |
 | ⚡ deepclip_b0 | 224 X 224 | ms_eff_gcvit_b0 | CLIP ViT-B/16 (frozen) | 8.82M | 0.83G | [spec](deepclip/config/deepclip_b0.yaml) |
 | 🔥 deepclip_b5 | 384 X 384 | ms_eff_gcvit_b5 | CLIP ViT-L/14 (frozen) | 50.61M | 13.26G | [spec](deepclip/config/deepclip_b5.yaml) |
-| ⚡ deepclip_b0_text_ft | 224 X 224 | ms_eff_gcvit_b0 | CLIP ViT-B/16 (LoRA) | 9.22M / 72.64M | 0.83G | [spec](deepclip/config/deepclip_b0_text_ft.yaml) |
-| 🔥 deepclip_b5_text_ft | 384 X 384 | ms_eff_gcvit_b5 | CLIP ViT-L/14 (LoRA) | 51.20M / 174.85M | 13.26G | [spec](deepclip/config/deepclip_b5_text_ft.yaml) |
+| ⚡ deepclip_b0_v2 | 224 X 224 | ms_eff_gcvit_b0 | CLIP ViT-B/16 (LoRA) | 72.44M | 15.18G | [spec](deepclip/config/deepclip_b0_v2.yaml) |
+| 🔥 deepclip_b5_v2 | 384 X 384 | ms_eff_gcvit_b5 | CLIP ViT-L/14 (LoRA) | 174.56M | 45.49G | [spec](deepclip/config/deepclip_b5_v2.yaml) |
 
-`*_text_ft` Params are trainable / total: the image encoder and the LoRA weights (r=8: 0.39M for ViT-B/16, 0.59M for
-ViT-L/14) are trained, the CLIP text weights are frozen but saved in the checkpoint. FLOPs are of the image encoder:
-at inference the 21 caption embeddings are computed once and cached.
+`deepclip_b0` and `deepclip_b5` don't keep the text encoder: the frozen CLIP text encoder embeds the 21 captions once
+and only the embeddings (`text_table`) are kept, so Params and FLOPs (multiply-accumulates, one image) are of the
+image encoder. `*_v2` keep the whole text encoder with LoRA (r=4: 0.20M for ViT-B/16, 0.29M for ViT-L/14), so Params
+are image + text encoder and FLOPs are one image plus the 21 captions. At inference the caption embeddings are cached,
+so each further image costs only the image encoder (0.83G for b0, 13.26G for b5).
 
 ## 🤗 Try It Live: Hugging Face Spaces
 
