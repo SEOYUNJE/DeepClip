@@ -24,7 +24,7 @@
 
 - [💡 What DeepClip Predicts](#-what-deepclip-predicts) - Fake probability plus 20 artifact scores (4 face regions × 5 artifact types)
 - [🏗️ Architecture](#-architecture) - DeepGuard's MS-Eff-GCViT image encoder aligned with frozen CLIP text embeddings
-- [🧬 Model Zoo](#-model-zoo) - `deepclip_b0`, `deepclip_b5` and their LoRA text encoder versions `deepclip_b0_text_ft`, `deepclip_b5_text_ft`
+- [🧬 Model Zoo](#-model-zoo) - `deepclip_b0`, `deepclip_b5` and their LoRA text encoder versions `deepclip_b0_v2`, `deepclip_b5_v2`
 - [🤗 Try It Live: Hugging Face Spaces](#-try-it-live-hugging-face-spaces) - Upload an image or video to the Hugging Face Space, no install needed
 - [🔮 Predict Image & Video](#-predict-image--video) - Detect deepfakes and their artifacts via the Hugging Face Hub or `deepclip.detect`
 - [🚀 Training](#-training) - Train DeepClip with `train_deepclip.py` and W&B experiment tracking
@@ -54,7 +54,7 @@ text encoder of **CLIP**.
   `pair_label`. The image encoder (trainable) is aligned with the frozen CLIP text embeddings with a multi-positive
   sigmoid loss (SigLIP). The 21 caption embeddings are computed once and kept in a table, so the text encoder is not
   run during training.
-  - **Text fine-tuning (`*_text_ft`)**: the CLIP text encoder is part of the model and is trained with **LoRA**
+  - **Text fine-tuning (`*_v2`)**: the CLIP text encoder is part of the model and is trained with **LoRA**
     (`lora_r`, `lora_alpha`, `lora_drop`) on the q, k, v and out projections of every text attention block, while the
     CLIP weights stay frozen. The 21 captions are embedded by the text encoder at every step, so the caption embeddings
     adapt together with the image encoder.
@@ -256,7 +256,7 @@ We recommend **Weights & Biases (W&B)** for experiment tracking (`--wandb-api-ke
 ```python
 !python train_deepclip.py \
     --root-dir DATA_ROOT \
-    --model-name "deepclip_b0" \ # deepclip_b0, deepclip_b5, deepclip_b0_text_ft, deepclip_b5_text_ft
+    --model-name "deepclip_b0" \ # deepclip_b0, deepclip_b5, deepclip_b0_v2, deepclip_b5_v2
     --output-dir "checkpoints" \ # Directory of the best checkpoint
     --seed 2025 \ # for reproducibility
     --wandb-api-key "your-api-key" # Write your own api key
@@ -279,7 +279,7 @@ DATA_ROOT/
 | Argument | Default | Description |
 | -------- | ------- | ----------- |
 | `--root-dir` | (required) | Root directory of the dataset |
-| `--model-name` | `deepclip_b0` | `deepclip_b0`, `deepclip_b5`, `deepclip_b0_text_ft` or `deepclip_b5_text_ft` |
+| `--model-name` | `deepclip_b0` | `deepclip_b0`, `deepclip_b5`, `deepclip_b0_v2` or `deepclip_b5_v2` |
 | `--config` | `deepclip/config/{model_name}.yaml` | Training recipe (model, LoRA, text sampling, loss, optimizer) |
 | `--output-dir` | `.` | Directory of the best checkpoint |
 | `--seed` | `2025` | Random seed |
