@@ -45,6 +45,10 @@ forgery the model sees.
 - **Fake probability**: `1 - p_real`, where `p_real` is the score of the caption *"a photo of a real face."*
 - **Artifact scores**: 4 regions × 5 types = 20 captions such as *"... blending artifacts on the mouth"*, each a probability in `[0, 1]`.
 
+<p align="center">
+  <img src="https://huggingface.co/KoreaPeter/deepclip_b5/resolve/main/artifact_map.png" alt="DeepClip artifact map (region × type)" width="50%">
+</p>
+
 ## 🏗️ Architecture
 
 DeepClip combines the **MS-Eff-GCViT** image encoder of [DeepGuard](https://github.com/HanMoonSub/DeepGuard) with the
