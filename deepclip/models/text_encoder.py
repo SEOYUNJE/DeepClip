@@ -10,10 +10,38 @@ _MODELS = {
     "ViT-B/16": "https://openaipublic.azureedge.net/clip/models/5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/ViT-B-16.pt",
     "ViT-L/14": "https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt",
 }
-TEXT_KEYS = ("token_embedding", "positional_embedding", "transformer", "ln_final", "text_projection")
+TEXT_KEYS = (
+    "token_embedding",
+    "positional_embedding",
+    "transformer",
+    "ln_final",
+    "text_projection",
+)
+
+# Shapes of the OpenAI text encoders, to build one without downloading its checkpoint
+TEXT_ENCODER_CFGS = {
+    "ViT-B/16": dict(
+        embed_dim=512,
+        context_length=77,
+        vocab_size=49408,
+        width=512,
+        heads=8,
+        layers=12,
+    ),
+    "ViT-L/14": dict(
+        embed_dim=768,
+        context_length=77,
+        vocab_size=49408,
+        width=768,
+        heads=12,
+        layers=12,
+    ),
+}
+
 
 def available_text_encoders() -> list:
     return list(_MODELS)
+
 
 def _read_openai_checkpoint(path: Path) -> dict:
     # The OpenAI checkpoints are TorchScript archives
@@ -21,6 +49,7 @@ def _read_openai_checkpoint(path: Path) -> dict:
         return torch.jit.load(str(path), map_location="cpu").state_dict()
     except RuntimeError:
         return torch.load(path, map_location="cpu", weights_only=True)
+
 
 def load_openai_text_state_dict(name: str, cache_dir: Path = CACHE_DIR) -> dict:
     """
@@ -30,7 +59,9 @@ def load_openai_text_state_dict(name: str, cache_dir: Path = CACHE_DIR) -> dict:
     """
 
     if name not in _MODELS:
-        raise ValueError(f"Unknown CLIP text encoder {name!r}. Available: {available_text_encoders()}")
+        raise ValueError(
+            f"Unknown CLIP text encoder {name!r}. Available: {available_text_encoders()}"
+        )
 
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -44,10 +75,14 @@ def load_openai_text_state_dict(name: str, cache_dir: Path = CACHE_DIR) -> dict:
 
     if not full_path.exists():
         print(f"Downloading CLIP {name} from {url}")
-        torch.hub.download_url_to_file(url, str(full_path), hash_prefix=url.split("/")[-2])
+        torch.hub.download_url_to_file(
+            url, str(full_path), hash_prefix=url.split("/")[-2]
+        )
 
     state_dict = _read_openai_checkpoint(full_path)
-    text_state_dict = {k: v.float() for k, v in state_dict.items() if k.split(".")[0] in TEXT_KEYS}
+    text_state_dict = {
+        k: v.float() for k, v in state_dict.items() if k.split(".")[0] in TEXT_KEYS
+    }
 
     tmp_path = text_path.with_name(text_path.name + ".tmp")
     torch.save(text_state_dict, tmp_path)
@@ -55,6 +90,7 @@ def load_openai_text_state_dict(name: str, cache_dir: Path = CACHE_DIR) -> dict:
     full_path.unlink()
 
     return text_state_dict
+
 
 class DeepTextEncoder(nn.Module):
     """
@@ -67,21 +103,23 @@ class DeepTextEncoder(nn.Module):
     """
 
     def __init__(
-            self,
-            embed_dim: int,
-            context_length: int = 77,
-            vocab_size: int = 49408,
-            width: int = 512,
-            heads: int = 8,
-            layers: int = 12,
-            ):
+        self,
+        embed_dim: int,
+        context_length: int = 77,
+        vocab_size: int = 49408,
+        width: int = 512,
+        heads: int = 8,
+        layers: int = 12,
+    ):
         super().__init__()
         self.embed_dim = embed_dim
         self.context_length = context_length
 
         self.token_embedding = nn.Embedding(vocab_size, width)
         self.positional_embedding = nn.Parameter(torch.empty(context_length, width))
-        self.transformer = CLIPTransformer(width=width, layers=layers, heads=heads, context_length=context_length)
+        self.transformer = CLIPTransformer(
+            width=width, layers=layers, heads=heads, context_length=context_length
+        )
         self.ln_final = nn.LayerNorm(width)
         self.text_projection = nn.Parameter(torch.empty(width, embed_dim))
 
@@ -91,7 +129,7 @@ class DeepTextEncoder(nn.Module):
         # Same as CLIP.initialize_parameters (only used when the weights are not loaded)
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
-        nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+        nn.init.normal_(self.text_projection, std=self.transformer.width**-0.5)
 
     @classmethod
     def from_openai(cls, name: str, cache_dir: Path = CACHE_DIR) -> "DeepTextEncoder":
@@ -100,26 +138,45 @@ class DeepTextEncoder(nn.Module):
         state_dict = load_openai_text_state_dict(name, cache_dir)
 
         width = state_dict["ln_final.weight"].shape[0]
-        layers = len({k.split(".")[2] for k in state_dict if k.startswith("transformer.resblocks")})
+        layers = len(
+            {
+                k.split(".")[2]
+                for k in state_dict
+                if k.startswith("transformer.resblocks")
+            }
+        )
 
         model = cls(
-            embed_dim = state_dict["text_projection"].shape[1],
-            context_length = state_dict["positional_embedding"].shape[0],
-            vocab_size = state_dict["token_embedding.weight"].shape[0],
-            width = width,
-            heads = width // 64,
-            layers = layers,
+            embed_dim=state_dict["text_projection"].shape[1],
+            context_length=state_dict["positional_embedding"].shape[0],
+            vocab_size=state_dict["token_embedding.weight"].shape[0],
+            width=width,
+            heads=width // 64,
+            layers=layers,
         )
         model.load_state_dict(state_dict, strict=True)
 
         return model.requires_grad_(False).eval()
 
+    @classmethod
+    def from_config(cls, name: str) -> "DeepTextEncoder":
+        """Text encoder with the shape of an OpenAI CLIP model and random weights (filled by a checkpoint later)"""
+
+        if name not in TEXT_ENCODER_CFGS:
+            raise ValueError(
+                f"Unknown CLIP text encoder {name!r}. Available: {list(TEXT_ENCODER_CFGS)}"
+            )
+
+        return cls(**TEXT_ENCODER_CFGS[name])
+
     def forward(self, tokens):
-        x = self.token_embedding(tokens) + self.positional_embedding[:tokens.shape[1]] # (B,L,D)
+        x = (
+            self.token_embedding(tokens) + self.positional_embedding[: tokens.shape[1]]
+        )  # (B,L,D)
         x = self.transformer(x)
         x = self.ln_final(x)
 
         # <|endoftext|> has the largest token id
-        x = x[torch.arange(x.shape[0], device=x.device), tokens.argmax(dim=-1)] # (B,D)
+        x = x[torch.arange(x.shape[0], device=x.device), tokens.argmax(dim=-1)]  # (B,D)
 
-        return x @ self.text_projection # (B,embed_dim)
+        return x @ self.text_projection  # (B,embed_dim)
