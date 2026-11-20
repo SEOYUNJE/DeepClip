@@ -4,6 +4,7 @@ from .clip_text import QuickGELU, ResidualAttentionBlock, CLIPTransformer
 from .drop import DropPath
 from .featextractor import FeatExtractor
 from .global_query import FeatExtract, GlobalQueryGen
+from .lora import LoRAMultiheadAttention, inject_lora
 from .mlp import Mlp
 from .patch import MBConvBlock, GCViTPatchEmbed
 from .reducesize import ReduceSize

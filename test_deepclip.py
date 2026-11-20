@@ -14,6 +14,7 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 from deepclip.detect import ClipVideoPredictor
+from deepclip.models.deepclip import available_models
 
 c_ = Fore.BLUE
 g_ = Fore.GREEN
@@ -132,7 +133,7 @@ def main():
     parser.add_argument(
         "--model-name",
         default="deepclip_b0",
-        choices=["deepclip_b0", "deepclip_b5"],
+        choices=available_models(),
         type=str,
         help="Name of the DeepClip model",
     )

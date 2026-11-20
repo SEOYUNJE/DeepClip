@@ -24,7 +24,7 @@
 
 - [💡 What DeepClip Predicts](#-what-deepclip-predicts) - Fake probability plus 20 artifact scores (4 face regions × 5 artifact types)
 - [🏗️ Architecture](#-architecture) - DeepGuard's MS-Eff-GCViT image encoder aligned with frozen CLIP text embeddings
-- [🧬 Model Zoo](#-model-zoo) - `deepclip_b0` and `deepclip_b5`
+- [🧬 Model Zoo](#-model-zoo) - `deepclip_b0`, `deepclip_b5` and their LoRA text encoder versions `deepclip_b0_v2`, `deepclip_b5_v2`
 - [🤗 Try It Live: Hugging Face Spaces](#-try-it-live-hugging-face-spaces) - Upload an image or video to the Hugging Face Space, no install needed
 - [🔮 Predict Image & Video](#-predict-image--video) - Detect deepfakes and their artifacts via the Hugging Face Hub or `deepclip.detect`
 - [🚀 Training](#-training) - Train DeepClip with `train_deepclip.py` and W&B experiment tracking
@@ -45,6 +45,10 @@ forgery the model sees.
 - **Fake probability**: `1 - p_real`, where `p_real` is the score of the caption *"a photo of a real face."*
 - **Artifact scores**: 4 regions × 5 types = 20 captions such as *"... blending artifacts on the mouth"*, each a probability in `[0, 1]`.
 
+<p align="center">
+  <img src="https://huggingface.co/KoreaPeter/deepclip_b5/resolve/main/artifact_map.png" alt="DeepClip artifact map (region × type)" width="50%">
+</p>
+
 ## 🏗️ Architecture
 
 DeepClip combines the **MS-Eff-GCViT** image encoder of [DeepGuard](https://github.com/HanMoonSub/DeepGuard) with the
@@ -54,6 +58,10 @@ text encoder of **CLIP**.
   `pair_label`. The image encoder (trainable) is aligned with the frozen CLIP text embeddings with a multi-positive
   sigmoid loss (SigLIP). The 21 caption embeddings are computed once and kept in a table, so the text encoder is not
   run during training.
+  - **Text fine-tuning (`*_v2`)**: the CLIP text encoder is part of the model and is trained with **LoRA**
+    (`lora_r`, `lora_alpha`, `lora_drop`) on the q, k, v and out projections of every text attention block, while the
+    CLIP weights stay frozen. The 21 captions are embedded by the text encoder at every step, so the caption embeddings
+    adapt together with the image encoder.
 - **(2) Inference**: the similarity to *"a photo of a real face."* gives the fake probability, and the similarity to
   the 20 region–artifact captions gives the artifact map.
 
@@ -63,6 +71,14 @@ text encoder of **CLIP**.
 | ----- | ---------- | ------------- | ------------ | ------ | ----- | ------------ |
 | ⚡ deepclip_b0 | 224 X 224 | ms_eff_gcvit_b0 | CLIP ViT-B/16 (frozen) | 8.82M | 0.83G | [spec](deepclip/config/deepclip_b0.yaml) |
 | 🔥 deepclip_b5 | 384 X 384 | ms_eff_gcvit_b5 | CLIP ViT-L/14 (frozen) | 50.61M | 13.26G | [spec](deepclip/config/deepclip_b5.yaml) |
+| ⚡ deepclip_b0_v2 | 224 X 224 | ms_eff_gcvit_b0 | CLIP ViT-B/16 (LoRA) | 72.44M | 15.18G | [spec](deepclip/config/deepclip_b0_v2.yaml) |
+| 🔥 deepclip_b5_v2 | 384 X 384 | ms_eff_gcvit_b5 | CLIP ViT-L/14 (LoRA) | 174.56M | 45.49G | [spec](deepclip/config/deepclip_b5_v2.yaml) |
+
+`deepclip_b0` and `deepclip_b5` don't keep the text encoder: the frozen CLIP text encoder embeds the 21 captions once
+and only the embeddings (`text_table`) are kept, so Params and FLOPs (multiply-accumulates, one image) are of the
+image encoder. `*_v2` keep the whole text encoder with LoRA (r=4: 0.20M for ViT-B/16, 0.29M for ViT-L/14), so Params
+are image + text encoder and FLOPs are one image plus the 21 captions. At inference the caption embeddings are cached,
+so each further image costs only the image encoder (0.83G for b0, 13.26G for b5).
 
 ## 🤗 Try It Live: Hugging Face Spaces
 
@@ -246,7 +262,7 @@ We recommend **Weights & Biases (W&B)** for experiment tracking (`--wandb-api-ke
 ```python
 !python train_deepclip.py \
     --root-dir DATA_ROOT \
-    --model-name "deepclip_b0" \ # deepclip_b0, deepclip_b5
+    --model-name "deepclip_b0" \ # deepclip_b0, deepclip_b5, deepclip_b0_v2, deepclip_b5_v2
     --output-dir "checkpoints" \ # Directory of the best checkpoint
     --seed 2025 \ # for reproducibility
     --wandb-api-key "your-api-key" # Write your own api key
@@ -269,8 +285,8 @@ DATA_ROOT/
 | Argument | Default | Description |
 | -------- | ------- | ----------- |
 | `--root-dir` | (required) | Root directory of the dataset |
-| `--model-name` | `deepclip_b0` | `deepclip_b0` or `deepclip_b5` |
-| `--config` | `deepclip/config/deepclip_{b0,b5}.yaml` | Training recipe (model, text sampling, loss, optimizer) |
+| `--model-name` | `deepclip_b0` | `deepclip_b0`, `deepclip_b5`, `deepclip_b0_v2` or `deepclip_b5_v2` |
+| `--config` | `deepclip/config/{model_name}.yaml` | Training recipe (model, LoRA, text sampling, loss, optimizer) |
 | `--output-dir` | `.` | Directory of the best checkpoint |
 | `--seed` | `2025` | Random seed |
 | `--num-workers` | `cpu_count - 1` | DataLoader workers |
