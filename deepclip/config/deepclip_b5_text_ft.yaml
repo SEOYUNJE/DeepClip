@@ -51,7 +51,7 @@ loss:
 
 train:
       epochs: 100
-      use_amp: True # Mixed Precision Training
+      use_amp: False # Mixed Precision Training
       n_accumulate: 1 # Gradient Accumulation steps
       optimizer: "AdamW"
       scheduler: "CosineAnnealingLR"
