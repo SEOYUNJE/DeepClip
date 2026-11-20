@@ -8,7 +8,7 @@ def build_optimizer(model: nn.Module, cfg):
         decay     : weights with 2 or more dimensions (conv, linear kernels)          -> cfg.train.weight_decay, lr
         no_decay  : 1 dimensional and scalar parameters (norm weights, biases,
                     BatchNorm, t_itc, b_itc)                                           -> 0, lr
-        text_lora : LoRA parameters of the text encoder (DeepClipTextFT only)          -> 0, cfg.train.text_lr (default lr)
+        text_lora : LoRA parameters of the text encoder (DeepClipV2 only)             -> 0, cfg.train.text_lr (default lr)
     Frozen parameters (the CLIP text weights) are never in the optimizer.
     """
 

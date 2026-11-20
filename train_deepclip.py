@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 
 from deepclip import models
 from deepclip.models.deepclip import available_models
-from deepclip.models.deepclip_text_ft import DeepClipTextFT
+from deepclip.models.deepclip import DeepClipV2
 from deepclip.data import (
     split_data,
     class_imbalance_handle,
@@ -249,7 +249,7 @@ class Trainer:
         Y = batch["Y"].to(self.cfg.device)  # (B,U)
         W = batch["W"].to(self.cfg.device)  # (B,U)
 
-        # (num_captions,D): text_table of DeepClip, the LoRA text encoder of DeepClipTextFT (once per step)
+        # (num_captions,D): text_table of DeepClip, the LoRA text encoder of DeepClipV2 (once per step)
         text_feats = self.model.text_features()
         img_emb = self.model.encode_image(imgs)  # (B,D)
         loss = itc_loss(self.model.itc_logits(img_emb, text_idx, text_feats), Y, W)
@@ -433,7 +433,7 @@ def main():
     args = parser.parse_args()
     seed_everything(args.seed)
 
-    # deepclip/config/{model_name}.yaml, e.g. deepclip_b0.yaml, deepclip_b0_text_ft.yaml
+    # deepclip/config/{model_name}.yaml, e.g. deepclip_b0.yaml, deepclip_b0_v2.yaml
     config_path = (
         args.config or ROOT_DIR / "deepclip" / "config" / f"{args.model_name}.yaml"
     )
@@ -476,7 +476,7 @@ def main():
     model = getattr(models, args.model_name)(
         **OmegaConf.to_container(cfg.model, resolve=True)
     )
-    if isinstance(model, DeepClipTextFT):
+    if isinstance(model, DeepClipV2):
         n_total = sum(p.numel() for p in model.text_encoder.parameters())
         print(
             f"📝 Text encoder: {model.clip_name} + LoRA (r={model.lora_r}, alpha={model.lora_alpha}, "
@@ -495,7 +495,7 @@ def main():
         f"{args.model_name}_a{cfg.text.type_sampling_alpha}"
         f"_b{cfg.text.region_sampling_beta}"
     )
-    if isinstance(model, DeepClipTextFT):
+    if isinstance(model, DeepClipV2):
         cfg.wandb_artifact_name += f"_r{model.lora_r}"
 
     run = wandb.init(

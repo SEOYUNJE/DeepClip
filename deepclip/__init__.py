@@ -12,18 +12,16 @@ warnings.filterwarnings("ignore")  # 일반 경고 숨기기
 logging.getLogger("timm").setLevel(logging.ERROR)  # timm 내부 로그 숨기기
 logging.getLogger("torch").setLevel(logging.ERROR)  # torch 관련 로그 숨기기
 
-from .models import image_encoder, text_encoder, deepclip, deepclip_text_ft
+from .models import image_encoder, text_encoder, deepclip
 from .models.image_encoder import DeepImageEncoder
 from .models.text_encoder import DeepTextEncoder
 from .models.deepclip import (
     DeepClip,
     deepclip_b0,
     deepclip_b5,
-)
-from .models.deepclip_text_ft import (
-    DeepClipTextFT,
-    deepclip_b0_text_ft,
-    deepclip_b5_text_ft,
+    DeepClipV2,
+    deepclip_b0_v2,
+    deepclip_b5_v2,
 )
 
 __all__ = [
@@ -31,9 +29,9 @@ __all__ = [
     "DeepImageEncoder",
     "DeepTextEncoder",
     "DeepClip",
-    "DeepClipTextFT",
+    "DeepClipV2",
     "deepclip_b0",
     "deepclip_b5",
-    "deepclip_b0_text_ft",
-    "deepclip_b5_text_ft",
+    "deepclip_b0_v2",
+    "deepclip_b5_v2",
 ]

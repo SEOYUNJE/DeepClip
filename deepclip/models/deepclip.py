@@ -12,6 +12,7 @@ from deepclip.data.text import (
     single_pair_caption,
     tokenize,
 )
+from deepclip.layers.lora import LORA_TARGETS, inject_lora
 from deepclip.models.image_encoder import DeepImageEncoder, IMAGE_ENCODER_CFGS
 from deepclip.models.text_encoder import DeepTextEncoder
 
@@ -51,12 +52,12 @@ default_cfgs = {
     "deepclip_b5": _cfg(
         url=f"{RELEASE_URL}/v1.0.0/deepclip_b5.pt", input_size=(3, 384, 384)
     ),
-    # DeepClipTextFT: CLIP text encoder trained with LoRA
-    "deepclip_b0_text_ft": _cfg(
-        url=f"{RELEASE_URL}/v1.2.0/deepclip_b0_text_ft.pt", input_size=(3, 224, 224)
+    # DeepClipV2: CLIP text encoder trained with LoRA
+    "deepclip_b0_v2": _cfg(
+        url=f"{RELEASE_URL}/v1.2.0/deepclip_b0_v2.pt", input_size=(3, 224, 224)
     ),
-    "deepclip_b5_text_ft": _cfg(
-        url=f"{RELEASE_URL}/v1.2.0/deepclip_b5_text_ft.pt", input_size=(3, 384, 384)
+    "deepclip_b5_v2": _cfg(
+        url=f"{RELEASE_URL}/v1.2.0/deepclip_b5_v2.pt", input_size=(3, 384, 384)
     ),
 }
 
@@ -68,7 +69,7 @@ def available_models() -> List[str]:
 
 class DeepClipBase(nn.Module):
     """
-    Parts shared by DeepClip and DeepClipTextFT: DeepImageEncoder, the SigLIP temperature/bias and the captions.
+    Parts shared by DeepClip and DeepClipV2: DeepImageEncoder, the SigLIP temperature/bias and the captions.
 
     Every caption describes one (region, type) pair, so there are 21 captions (in all_captions order):
 
@@ -236,6 +237,101 @@ class DeepClip(DeepClipBase):
         return self.text_table
 
 
+class DeepClipV2(DeepClipBase):
+    """
+    DeepClip with the CLIP text encoder trained by LoRA instead of a frozen text_table.
+
+    The text encoder is a part of the model: every step embeds the 21 captions (all_captions) with it, so the
+    caption embeddings move together with the image embeddings. The CLIP weights stay frozen, only a low-rank
+    update (r, alpha, drop) of the attention (q, k, v, out) of every text block is learned.
+
+    Learnable parameters: image_encoder, LoRA of text_encoder and 2 scalars
+        t_itc, b_itc : log temperature and bias of the loss (SigLIP)
+
+    In eval mode under torch.no_grad() the caption embeddings are computed once and cached
+    (cleared by train(), load_state_dict() and moving the model).
+    """
+
+    def __init__(
+        self,
+        clip_name: str = "ViT-B/16",
+        embed_dim: int | None = None,
+        lora_r: int = 8,
+        lora_alpha: float = 16.0,
+        lora_drop: float = 0.1,
+        lora_targets: tuple = LORA_TARGETS,
+        load_openai: bool = True,
+        **kwargs,
+    ):
+        """
+        Args:
+            clip_name: OpenAI CLIP text encoder ("ViT-B/16", "ViT-L/14").
+            embed_dim: Only checked against clip_name when given.
+            lora_r, lora_alpha, lora_drop: Rank, scale (alpha / r) and input dropout of LoRA.
+            lora_targets: Projections of the text attention with LoRA, a subset of ("q", "k", "v", "out").
+            load_openai: Load the OpenAI CLIP text weights (training). False when the whole text encoder is
+                loaded from a DeepClipV2 checkpoint.
+            **kwargs: Arguments of DeepImageEncoder.
+        """
+
+        super().__init__(clip_name, embed_dim, **kwargs)
+
+        self.lora_r = lora_r
+        self.lora_alpha = lora_alpha
+        self.lora_drop = lora_drop
+        self.lora_targets = tuple(lora_targets)
+
+        if load_openai:
+            self.text_encoder = DeepTextEncoder.from_openai(clip_name)
+        else:
+            self.text_encoder = DeepTextEncoder.from_config(clip_name)
+
+        if self.text_encoder.embed_dim != self.embed_dim:
+            raise ValueError(
+                f"Text encoder of {clip_name} gives {self.text_encoder.embed_dim}, not {self.embed_dim}"
+            )
+
+        self.num_lora_params = inject_lora(
+            self.text_encoder, lora_r, lora_alpha, lora_drop, self.lora_targets
+        )
+
+        # The text transformer is causal and <|endoftext|> is the last token of a caption, so the padding after
+        # the longest caption changes nothing: the tokens are cut there
+        tokens = tokenize(self.captions)
+        max_len = int(tokens.argmax(dim=-1).max()) + 1
+        self.register_buffer("caption_tokens", tokens[:, :max_len], persistent=False)
+
+        self._text_cache = None
+        self.register_load_state_dict_post_hook(
+            lambda module, _: module._clear_text_cache()
+        )
+
+    def _clear_text_cache(self):
+        self._text_cache = None
+
+    def train(self, mode: bool = True):
+        self._clear_text_cache()
+        return super().train(mode)
+
+    def _apply(self, *args, **kwargs):
+        # .to(), .cuda(), .half(), ...
+        self._clear_text_cache()
+        return super()._apply(*args, **kwargs)
+
+    def text_features(self) -> torch.Tensor:
+        """(num_captions, embed_dim) L2 normalized caption embeddings of the (LoRA) text encoder, float32"""
+
+        if self._text_cache is not None:
+            return self._text_cache
+
+        text_feats = F.normalize(self.text_encoder(self.caption_tokens).float(), dim=-1)
+
+        if not self.training and not torch.is_grad_enabled():
+            self._text_cache = text_feats
+
+        return text_feats
+
+
 def create_model(model_cls, variant, pretrained=False, **kwargs):
     """Builds a DeepClip model with timm (pretrained weights from default_cfgs[variant]['url'])"""
 
@@ -258,6 +354,12 @@ def _create_deepclip(variant, pretrained=False, **kwargs):
     return create_model(DeepClip, variant, pretrained, **kwargs)
 
 
+def _create_deepclip_v2(variant, pretrained=False, **kwargs):
+    # the whole text encoder (CLIP weights + LoRA) comes from the checkpoint when pretrained
+    kwargs.setdefault("load_openai", not pretrained)
+    return create_model(DeepClipV2, variant, pretrained, **kwargs)
+
+
 def model_kwargs(backbone, **kwargs):
     clip_name = {"b0": "ViT-B/16", "b5": "ViT-L/14"}[backbone]
     # Values in kwargs (e.g. cfg.model of the yaml) override the defaults
@@ -272,3 +374,29 @@ def deepclip_b0(pretrained=False, **kwargs) -> DeepClip:
 @register_model
 def deepclip_b5(pretrained=False, **kwargs) -> DeepClip:
     return _create_deepclip("deepclip_b5", pretrained, **model_kwargs("b5", **kwargs))
+
+
+# LoRA of the released weights (same as deepclip/config/deepclip_{b0,b5}_v2.yaml). lora_r and lora_alpha must match
+# the checkpoint: the LoRA weight shapes depend on lora_r and the scale is lora_alpha / lora_r
+LORA_CFGS = {
+    "deepclip_b0_v2": {"lora_r": 4, "lora_alpha": 8.0, "lora_drop": 0.15},
+    "deepclip_b5_v2": {"lora_r": 4, "lora_alpha": 8.0, "lora_drop": 0.25},
+}
+
+
+@register_model
+def deepclip_b0_v2(pretrained=False, **kwargs) -> DeepClipV2:
+    return _create_deepclip_v2(
+        "deepclip_b0_v2",
+        pretrained,
+        **model_kwargs("b0", **{**LORA_CFGS["deepclip_b0_v2"], **kwargs}),
+    )
+
+
+@register_model
+def deepclip_b5_v2(pretrained=False, **kwargs) -> DeepClipV2:
+    return _create_deepclip_v2(
+        "deepclip_b5_v2",
+        pretrained,
+        **model_kwargs("b5", **{**LORA_CFGS["deepclip_b5_v2"], **kwargs}),
+    )
