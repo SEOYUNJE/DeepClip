@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from typing import List
 from deepclip.layers.featextractor import FeatExtractor
-from deepclip.layers.transformer import GCViT
+from deepclip.layers.transformer import GCViT, GCViTV2
 from deepclip.layers.weight_init import trunc_normal_
 
 NORM_LAYERS = {
@@ -50,6 +50,12 @@ IMAGE_ENCODER_CFGS = {
     ),
 }
 
+# Pooling of the final GCViT feature map: global average pooling (GCViT) or CLIP attention pooling (GCViTV2)
+POOL_LAYERS = {
+    "gap": GCViT,
+    "attn": GCViTV2,
+}
+
 def get_norm_layer(image_norm: str):
     if image_norm not in NORM_LAYERS:
         raise ValueError(f"image_norm must be one of {list(NORM_LAYERS)}: {image_norm!r}")
@@ -66,7 +72,8 @@ class DeepImageEncoder(nn.Module):
 
     Differences from MultiScaleEffGCViT: both branches are always used (no use_low / use_high), the
     classification head is replaced by norm + image_projection, and every norm of the GCViT branches and norm is
-    image_norm (rmsnorm or layernorm). The BatchNorm of the backbone is not changed.
+    image_norm (rmsnorm or layernorm). The BatchNorm of the backbone is not changed. With image_pool="attn" each
+    GCViT branch is pooled by the attention pooling of CLIP (GCViTV2) instead of global average pooling.
     """
 
     def __init__(
@@ -93,6 +100,7 @@ class DeepImageEncoder(nn.Module):
             l_drop_path: float = 0.1,
             h_drop_path: float = 0.05,
             image_norm: str = "rmsnorm",
+            image_pool: str = "gap",
             **kwargs
             ):
         """
@@ -104,13 +112,19 @@ class DeepImageEncoder(nn.Module):
             h_block_idx: Index of the backbone block to extract high-level (low-resolution) features.
             l_*, h_*: GCViT settings of the low-level and high-level branches (see DeepGuard).
             image_norm: "rmsnorm" or "layernorm", used in the GCViT branches and norm.
+            image_pool: Pooling of each GCViT branch: "gap" (global average pooling, GCViT) or "attn"
+                (CLIP AttentionPool2d, GCViTV2).
             **kwargs: Ignored (e.g. arguments added by timm).
         """
 
         super().__init__()
         norm_layer = get_norm_layer(image_norm)
+        if image_pool not in POOL_LAYERS:
+            raise ValueError(f"image_pool must be one of {list(POOL_LAYERS)}: {image_pool!r}")
+        gcvit = POOL_LAYERS[image_pool]
 
         self.image_norm = image_norm
+        self.image_pool = image_pool
         self.embed_dim = embed_dim
 
         self.feat_extractor = FeatExtractor(
@@ -123,7 +137,7 @@ class DeepImageEncoder(nn.Module):
         self.l_meta = self._build_metadata(img_size, l_block_idx)
         self.h_meta = self._build_metadata(img_size, h_block_idx)
 
-        self.l_gcvit = GCViT(
+        self.l_gcvit = gcvit(
                             in_chs = self.l_meta['in_chs'],
                             input_resolution = self.l_meta['input_resolution'],
                             dim = l_dim,
@@ -136,7 +150,7 @@ class DeepImageEncoder(nn.Module):
                             drop_path = l_drop_path,
                             norm_layer = norm_layer,
                         )
-        self.h_gcvit = GCViT(
+        self.h_gcvit = gcvit(
                             in_chs = self.h_meta['in_chs'],
                             input_resolution = self.h_meta['input_resolution'],
                             dim = h_dim,
