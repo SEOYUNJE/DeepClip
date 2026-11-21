@@ -49,7 +49,7 @@ forgery the model sees.
 - **Artifact scores**: 4 regions × 5 types = 20 captions such as *"... blending artifacts on the mouth"*, each a probability in `[0, 1]`.
 
 <p align="center">
-  <img src="https://huggingface.co/KoreaPeter/deepclip_b5/resolve/main/artifact_map.png" alt="DeepClip artifact map (region × type)" width="50%">
+  <img src="assets/artifact_map.png" alt="DeepClip artifact map (region × type)" width="50%">
 </p>
 
 ## 🏗️ Architecture
@@ -365,7 +365,9 @@ Tested on the FaceForensics++ test set.
 | Model | Test@AUC | Test@Accuracy | Test@Log Loss | Test@Macro F1 |
 | ----- | -------- | ------------- | ------------- | ------------- |
 | ⚡ deepclip_b0 | 0.9917 | 96.33% | 0.0959 | 0.9396 |
-| 🔥 deepclip_b5 | **0.9935** | **98.08%** | **0.0739** | **0.9672** |
+| 🔥 deepclip_b5 | 0.9935 | 98.08% | 0.0739 | 0.9672 |
+| ⚡ deepclip_b0_v2 | 0.9923 | 96.33% | 0.1024 | 0.9394 |
+| 🔥 deepclip_b5_v2 | **0.9960** | **98.25%** | **0.0667** | **0.9702** |
 
 ### Cross-Domain Evaluation
 
@@ -376,14 +378,18 @@ Tested on datasets not seen during training.
 | Model | Test@AUC | Test@Accuracy | Test@Log Loss | Test@Macro F1 |
 | ----- | -------- | ------------- | ------------- | ------------- |
 | ⚡ deepclip_b0 | 0.6821 | 61.97% | 0.8823 | 0.6147 |
-| 🔥 deepclip_b5 | **0.7674** | **74.13%** | **0.7455** | **0.7162** |
+| 🔥 deepclip_b5 | 0.7674 | 74.13% | 0.7455 | **0.7162** |
+| ⚡ deepclip_b0_v2 | 0.7799 | 70.46% | **0.6764** | 0.6930 |
+| 🔥 deepclip_b5_v2 | **0.8010** | **77.80%** | 0.8903 | 0.7154 |
 
 **KoDF**
 
 | Model | Test@AUC | Test@Accuracy | Test@Log Loss | Test@Macro F1 |
 | ----- | -------- | ------------- | ------------- | ------------- |
 | ⚡ deepclip_b0 | 0.7726 | 68.83% | **1.5238** | 0.6791 |
-| 🔥 deepclip_b5 | **0.8277** | **71.75%** | 1.6868 | **0.7072** |
+| 🔥 deepclip_b5 | 0.8277 | 71.75% | 1.6868 | 0.7072 |
+| ⚡ deepclip_b0_v2 | 0.7732 | 67.51% | 2.2001 | 0.6677 |
+| 🔥 deepclip_b5_v2 | **0.8446** | **72.14%** | 2.1616 | **0.7107** |
 
 ## ⚖️ License
 
