@@ -59,9 +59,13 @@ default_cfgs = {
     "deepclip_b5_v2": _cfg(
         url=f"{RELEASE_URL}/v1.2.0/deepclip_b5_v2.pt", input_size=(3, 384, 384)
     ),
-    # DeepClipV2 + layernorm + CLIP attention pooling (GCViTV2) in the image encoder, not released yet
-    "deepclip_b0_v2_ap": _cfg(url="", input_size=(3, 224, 224)),
-    "deepclip_b5_v2_ap": _cfg(url="", input_size=(3, 384, 384)),
+    # DeepClipV2 + layernorm + CLIP attention pooling (GCViTV2) in the image encoder
+    "deepclip_b0_v2_ap": _cfg(
+        url=f"{RELEASE_URL}/v1.3.0/deepclip_b0_v2_ap.pt", input_size=(3, 224, 224)
+    ),
+    "deepclip_b5_v2_ap": _cfg(
+        url=f"{RELEASE_URL}/v1.3.0/deepclip_b5_v2_ap.pt", input_size=(3, 384, 384)
+    ),
 }
 
 
@@ -409,10 +413,18 @@ def deepclip_b5_v2(pretrained=False, **kwargs) -> DeepClipV2:
 # LoRA r=8, alpha=16 (same as deepclip/config/deepclip_{b0,b5}_v2_ap.yaml)
 V2_AP_CFGS = {
     "deepclip_b0_v2_ap": {
-        "lora_r": 8, "lora_alpha": 16.0, "lora_drop": 0.15, "image_norm": "layernorm", "image_pool": "attn",
+        "lora_r": 8,
+        "lora_alpha": 16.0,
+        "lora_drop": 0.15,
+        "image_norm": "layernorm",
+        "image_pool": "attn",
     },
     "deepclip_b5_v2_ap": {
-        "lora_r": 8, "lora_alpha": 16.0, "lora_drop": 0.25, "image_norm": "layernorm", "image_pool": "attn",
+        "lora_r": 8,
+        "lora_alpha": 16.0,
+        "lora_drop": 0.25,
+        "image_norm": "layernorm",
+        "image_pool": "attn",
     },
 }
 
