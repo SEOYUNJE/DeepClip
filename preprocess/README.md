@@ -7,6 +7,12 @@ Builds the frame-level dataset of FaceForensics++ (FF++) used by DeepClip and ge
 FF++ has 5 manipulation methods (`Deepfakes`, `Face2Face`, `FaceShifter`, `FaceSwap`, `NeuralTextures`) and the
 `Original` videos. Only the **train** split (`train.json`) is processed.
 
+> **Preprocessed dataset on the Hugging Face Hub:** the outputs of the 5 steps with the default arguments (videos,
+> crops, boxes, forgery masks, `raw_annotation.parquet` and `train_clip_frame_metadata.csv`) are on
+> [`KoreaPeter/faceforensics-c23-forgery-annotation`](https://huggingface.co/datasets/KoreaPeter/faceforensics-c23-forgery-annotation)
+> (gated: agree to the FaceForensics Terms of Use). Download it to skip the preprocessing, or run the steps below to
+> build your own version with other arguments. See [Download from the Hugging Face Hub](#download-from-the-hugging-face-hub).
+
 ## Building docker image
 
 Requires [Docker Engine](https://docs.docker.com/engine/install/) and, for the GPU, the
@@ -93,10 +99,30 @@ Change the arguments of crop_face (step 3) and run steps 3 to 5:
 docker run --gpus all --shm-size=8g --rm -v <DATA_ROOT>:/data -v deepclip-cache:/root/.cache/deepclip -e STEPS=3,4,5 -e CROP_FACE_ARGS="--margin-ratio 0.3 --margin-jitter 0.05" -it seoyunje/deepclip-preprocess:gpu
 ```
 
+## Download from the Hugging Face Hub
+
+[`KoreaPeter/faceforensics-c23-forgery-annotation`](https://huggingface.co/datasets/KoreaPeter/faceforensics-c23-forgery-annotation)
+holds the videos and the outputs of the 5 steps (without the intermediate 68 landmarks). Request access on the dataset page, log in with `hf auth login`, then
+restore `DATA_ROOT`:
+
+```bash
+hf download KoreaPeter/faceforensics-c23-forgery-annotation --repo-type dataset --include "raw/*" "videos/*" --local-dir DATA_ROOT
+cd DATA_ROOT
+for f in raw/*.tar; do tar -xf "$f"; done
+mv raw/*.csv raw/*.parquet . && mv raw/csv .
+for f in videos/*/*.zip; do unzip -q "$f"; done
+```
+
+To change only the annotation (steps 4 and 5), keep the downloaded crops and `train_frame_metadata.csv` and run
+`-e STEPS=4,5` with Docker. Without
+the annotation files, the same videos, crops and boxes are also on
+[`KoreaPeter/faceforensics-c23`](https://huggingface.co/datasets/KoreaPeter/faceforensics-c23).
+
 ## Data preparation
 
 The steps need the FaceForensics++ (c23) videos and their csv files. Download them from
-[Kaggle](https://www.kaggle.com/datasets/xdxd003/ff-c23), or email seoyunje2001@gmail.com to get a Google Drive share,
+[Kaggle](https://www.kaggle.com/datasets/xdxd003/ff-c23) or the
+[Hugging Face Hub](#download-from-the-hugging-face-hub), or email seoyunje2001@gmail.com to get a Google Drive share,
 and put them in `DATA_ROOT`.
 
 All files are written in `DATA_ROOT` (the number is the step that writes the file):
@@ -326,6 +352,15 @@ Two weight files are **not stored in the repository** (nor in the Docker image).
 > Check the terms before redistributing or using it commercially.
 
 ## Citation
+
+```
+@inproceedings{vlffd2025,
+    title = {Towards General Visual-Linguistic Face Forgery Detection},
+    author = {Sun, Ke and Chen, Shen and Yao, Taiping and Zhou, Ziyin and Ji, Jiayi and Sun, Xiaoshuai and Lin, Chia-Wen and Ji, Rongrong},
+    booktitle = {CVPR},
+    year = {2025}
+}
+```
 
 ```
 @inproceedings{roessler2019faceforensicspp,

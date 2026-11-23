@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/PyTorch-EE4C2C?style=flat-square&logo=pytorch&logoColor=white" alt="PyTorch">
   <a href="https://huggingface.co/spaces/KoreaPeter/deepclip"><img src="https://img.shields.io/badge/🤗%20Spaces-Demo-FFD21E?style=flat-square" alt="Hugging Face Spaces"></a>
+  <a href="https://huggingface.co/datasets/KoreaPeter/faceforensics-c23-forgery-annotation"><img src="https://img.shields.io/badge/🤗%20Dataset-FF++%20Annotation-FFD21E?style=flat-square" alt="Hugging Face Dataset"></a>
 </p>
 
 <p align="center">
@@ -273,7 +274,14 @@ Set `STEPS` (e.g. `-e STEPS=3,4,5`) to run only some steps, and `*_ARGS` to over
 
 ## 🗂️ Data Preparation
 
-Download the FaceForensics++ (c23) videos and csv files from [Kaggle](https://www.kaggle.com/datasets/xdxd003/ff-c23) into `DATA_ROOT`. The pipeline runs 5 steps, writing every output to `DATA_ROOT`:
+**Preprocessed dataset:** the videos and the preprocessing outputs (crops, boxes, forgery masks,
+`raw_annotation.parquet`, `train_clip_frame_metadata.csv`) are on the Hugging Face Hub as
+[`KoreaPeter/faceforensics-c23-forgery-annotation`](https://huggingface.co/datasets/KoreaPeter/faceforensics-c23-forgery-annotation)
+(gated: agree to the FaceForensics Terms of Use). Download it to skip the preprocessing
+(see [preprocess/README.md](preprocess/README.md#download-from-the-hugging-face-hub)), or customize the steps with
+Docker to build your own version.
+
+To preprocess from scratch, download the FaceForensics++ (c23) videos and csv files from [Kaggle](https://www.kaggle.com/datasets/xdxd003/ff-c23) into `DATA_ROOT`. The pipeline runs 5 steps, writing every output to `DATA_ROOT`:
 
 1. `split_data` - train / test metadata
 2. `detect_original_face` - YOLO face boxes of the real videos, reused for their fakes (pixel-aligned pairs)
