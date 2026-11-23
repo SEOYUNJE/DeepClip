@@ -9,6 +9,7 @@ from .global_query import GlobalQueryGen
 from .reducesize import ReduceSize
 from .window import window_partition, window_reverse
 from .weight_init import trunc_normal_
+from .attnpool import AttentionPool2d
 
 class GCViTBlock(nn.Module):
     """
@@ -264,3 +265,52 @@ class GCViT(nn.Module):
         x = x.reshape(x.shape[0],-1) #(B,C,1,1) -> (B,C)
         
         return x
+
+class GCViTV2(GCViT):
+    """
+    GCViT with the global average pooling replaced by the attention pooling of CLIP (AttentionPool2d).
+
+        inp: (B,in_chs,H,W)
+        out: (B,C)
+
+    The final feature map (B,h,w,C) after norm is pooled by AttentionPool2d(h, C, pool_heads) instead of avgpool.
+    """
+    def __init__(self,
+                in_chs: int,
+                input_resolution: int | float,
+                dim: int,
+                depths: List[int],
+                window_size: List[int],
+                mlp_ratio: List[float],
+                num_heads: List[int],
+                pool_heads: int | None = None,
+                **kwargs):
+        """
+        Args:
+            in_chs, input_resolution, dim, depths, window_size, mlp_ratio, num_heads, **kwargs: Arguments of GCViT.
+            pool_heads: Heads of AttentionPool2d (default: num_heads of the last stage).
+        """
+        super().__init__(in_chs, input_resolution, dim, depths, window_size, mlp_ratio, num_heads, **kwargs)
+
+        num_feats = int(dim * 2 ** (len(depths) - 1))
+        # GCViTPatchEmbed keeps the resolution, every stage but the last halves it (ReduceSize)
+        final_resolution = int(input_resolution * 2 ** (-(len(depths) - 1)))
+
+        del self.avgpool
+        # Built after GCViT._init_weights, so it keeps the CLIP initialization
+        self.attnpool = AttentionPool2d(
+            spacial_dim = final_resolution,
+            embed_dim = num_feats,
+            num_heads = pool_heads or num_heads[-1],
+        )
+
+    def forward(self, x):
+        x = self.patch_embed(x) #(B,in_chs,H,W) -> (B,H,W,D)
+        x = self.pos_drop(x)
+
+        for stage in self.stages:
+            x = stage(x) # (B,H,W,D) -> (B,H//2,W//2,2D)
+
+        x = self.norm(x) # (B,h,w,C)
+
+        return self.attnpool(x) # (B,C)

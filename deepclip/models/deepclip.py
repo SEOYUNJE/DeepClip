@@ -59,6 +59,9 @@ default_cfgs = {
     "deepclip_b5_v2": _cfg(
         url=f"{RELEASE_URL}/v1.2.0/deepclip_b5_v2.pt", input_size=(3, 384, 384)
     ),
+    # DeepClipV2 + layernorm + CLIP attention pooling (GCViTV2) in the image encoder, not released yet
+    "deepclip_b0_v2_ap": _cfg(url="", input_size=(3, 224, 224)),
+    "deepclip_b5_v2_ap": _cfg(url="", input_size=(3, 384, 384)),
 }
 
 
@@ -399,4 +402,34 @@ def deepclip_b5_v2(pretrained=False, **kwargs) -> DeepClipV2:
         "deepclip_b5_v2",
         pretrained,
         **model_kwargs("b5", **{**LORA_CFGS["deepclip_b5_v2"], **kwargs}),
+    )
+
+
+# deepclip_{b0,b5}_v2_ap: DeepClipV2 with layernorm and the attention pooling of CLIP (GCViTV2) in the image encoder,
+# LoRA r=8, alpha=16 (same as deepclip/config/deepclip_{b0,b5}_v2_ap.yaml)
+V2_AP_CFGS = {
+    "deepclip_b0_v2_ap": {
+        "lora_r": 8, "lora_alpha": 16.0, "lora_drop": 0.15, "image_norm": "layernorm", "image_pool": "attn",
+    },
+    "deepclip_b5_v2_ap": {
+        "lora_r": 8, "lora_alpha": 16.0, "lora_drop": 0.25, "image_norm": "layernorm", "image_pool": "attn",
+    },
+}
+
+
+@register_model
+def deepclip_b0_v2_ap(pretrained=False, **kwargs) -> DeepClipV2:
+    return _create_deepclip_v2(
+        "deepclip_b0_v2_ap",
+        pretrained,
+        **model_kwargs("b0", **{**V2_AP_CFGS["deepclip_b0_v2_ap"], **kwargs}),
+    )
+
+
+@register_model
+def deepclip_b5_v2_ap(pretrained=False, **kwargs) -> DeepClipV2:
+    return _create_deepclip_v2(
+        "deepclip_b5_v2_ap",
+        pretrained,
+        **model_kwargs("b5", **{**V2_AP_CFGS["deepclip_b5_v2_ap"], **kwargs}),
     )

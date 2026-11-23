@@ -9,4 +9,6 @@ from .deepclip import (
     DeepClipV2,
     deepclip_b0_v2,
     deepclip_b5_v2,
+    deepclip_b0_v2_ap,
+    deepclip_b5_v2_ap,
 )

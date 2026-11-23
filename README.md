@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/PyTorch-EE4C2C?style=flat-square&logo=pytorch&logoColor=white" alt="PyTorch">
   <a href="https://huggingface.co/spaces/KoreaPeter/deepclip"><img src="https://img.shields.io/badge/🤗%20Spaces-Demo-FFD21E?style=flat-square" alt="Hugging Face Spaces"></a>
+  <a href="https://huggingface.co/datasets/KoreaPeter/faceforensics-c23-forgery-annotation"><img src="https://img.shields.io/badge/🤗%20Dataset-FF++%20Annotation-FFD21E?style=flat-square" alt="Hugging Face Dataset"></a>
 </p>
 
 <p align="center">
@@ -24,9 +25,12 @@
 
 - [💡 What DeepClip Predicts](#-what-deepclip-predicts) - Fake probability plus 20 artifact scores (4 face regions × 5 artifact types)
 - [🏗️ Architecture](#-architecture) - DeepGuard's MS-Eff-GCViT image encoder aligned with frozen CLIP text embeddings
-- [🧬 Model Zoo](#-model-zoo) - `deepclip_b0`, `deepclip_b5` and their LoRA text encoder versions `deepclip_b0_v2`, `deepclip_b5_v2`
+- [🧬 Model Zoo](#-model-zoo) - `deepclip_b0`, `deepclip_b5`, their LoRA text encoder versions `deepclip_b0_v2`, `deepclip_b5_v2` and the attention pooling versions `deepclip_b0_v2_ap`, `deepclip_b5_v2_ap`
 - [🤗 Try It Live: Hugging Face Spaces](#-try-it-live-hugging-face-spaces) - Upload an image or video to the Hugging Face Space, no install needed
 - [🔮 Predict Image & Video](#-predict-image--video) - Detect deepfakes and their artifacts via the Hugging Face Hub or `deepclip.detect`
+- [🐳 Building Docker Image](#-building-docker-image) - Build or pull the FF++ preprocessing image
+- [🏃 Running Docker](#-running-docker) - Run the preprocessing pipeline on `DATA_ROOT`
+- [🗂️ Data Preparation](#️-data-preparation) - The 5 preprocessing steps from FF++ videos to annotated face crops
 - [🚀 Training](#-training) - Train DeepClip with `train_deepclip.py` and W&B experiment tracking
 - [📈 Model Evaluation](#-model-evaluation) - Benchmark a pretrained model on deepfake videos with `test_deepclip.py`
 - [⚖️ License](#-license) - MIT license
@@ -46,7 +50,7 @@ forgery the model sees.
 - **Artifact scores**: 4 regions × 5 types = 20 captions such as *"... blending artifacts on the mouth"*, each a probability in `[0, 1]`.
 
 <p align="center">
-  <img src="https://huggingface.co/KoreaPeter/deepclip_b5/resolve/main/artifact_map.png" alt="DeepClip artifact map (region × type)" width="50%">
+  <img src="assets/artifact_map.png" alt="DeepClip artifact map (region × type)" width="50%">
 </p>
 
 ## 🏗️ Architecture
@@ -62,6 +66,10 @@ text encoder of **CLIP**.
     (`lora_r`, `lora_alpha`, `lora_drop`) on the q, k, v and out projections of every text attention block, while the
     CLIP weights stay frozen. The 21 captions are embedded by the text encoder at every step, so the caption embeddings
     adapt together with the image encoder.
+  - **Attention pooling (`*_v2_ap`)**: `*_v2` with two changes in the image encoder (**GCViTV2**): the global average
+    pooling of the last feature map is replaced by the **attention pooling of CLIP** (`AttentionPool2d`: a query from
+    the mean token attends to every spatial token), and RMSNorm by **LayerNorm** (`image_norm: layernorm`,
+    `image_pool: attn`). The LoRA rank is raised to r=8 (alpha 16).
 - **(2) Inference**: the similarity to *"a photo of a real face."* gives the fake probability, and the similarity to
   the 20 region–artifact captions gives the artifact map.
 
@@ -73,12 +81,16 @@ text encoder of **CLIP**.
 | 🔥 deepclip_b5 | 384 X 384 | ms_eff_gcvit_b5 | CLIP ViT-L/14 (frozen) | 50.61M | 13.26G | [spec](deepclip/config/deepclip_b5.yaml) |
 | ⚡ deepclip_b0_v2 | 224 X 224 | ms_eff_gcvit_b0 | CLIP ViT-B/16 (LoRA) | 72.44M | 15.18G | [spec](deepclip/config/deepclip_b0_v2.yaml) |
 | 🔥 deepclip_b5_v2 | 384 X 384 | ms_eff_gcvit_b5 | CLIP ViT-L/14 (LoRA) | 174.56M | 45.49G | [spec](deepclip/config/deepclip_b5_v2.yaml) |
+| ⚡ deepclip_b0_v2_ap | 224 X 224 | ms_eff_gcvit_b0 (attn pool) | CLIP ViT-B/16 (LoRA) | 73.07M | 15.27G | [spec](deepclip/config/deepclip_b0_v2_ap.yaml) |
+| 🔥 deepclip_b5_v2_ap | 384 X 384 | ms_eff_gcvit_b5 (attn pool) | CLIP ViT-L/14 (LoRA) | 176.64M | 45.72G | [spec](deepclip/config/deepclip_b5_v2_ap.yaml) |
 
 `deepclip_b0` and `deepclip_b5` don't keep the text encoder: the frozen CLIP text encoder embeds the 21 captions once
 and only the embeddings (`text_table`) are kept, so Params and FLOPs (multiply-accumulates, one image) are of the
 image encoder. `*_v2` keep the whole text encoder with LoRA (r=4: 0.20M for ViT-B/16, 0.29M for ViT-L/14), so Params
 are image + text encoder and FLOPs are one image plus the 21 captions. At inference the caption embeddings are cached,
-so each further image costs only the image encoder (0.83G for b0, 13.26G for b5).
+so each further image costs only the image encoder (0.83G for b0, 13.26G for b5). `*_v2_ap` use LoRA r=8 (0.39M for
+ViT-B/16, 0.59M for ViT-L/14), and the attention pooling adds 0.44M (b0) / 1.78M (b5) parameters to the image encoder,
+so a further image costs 0.84G (b0) / 13.38G (b5).
 
 ## 🤗 Try It Live: Hugging Face Spaces
 
@@ -245,6 +257,48 @@ result = predictor.predict_video_artifacts(video_path = "path/to/video.mp4", num
 | `mean` | Mean of all frames |
 | `vote` | Ratio of frames with probability > 0.5 |
 
+## 🐳 Building Docker Image
+
+Build from the repository root (GPU, or CPU with `--build-arg BASE_IMAGE=python:3.11-slim`):
+
+```bash
+docker build -f preprocess/Dockerfile -t deepclip-preprocess:gpu .
+```
+
+Or pull the prebuilt image from [Docker Hub](https://hub.docker.com/r/seoyunje/deepclip-preprocess) (`gpu` / `cpu`):
+
+```bash
+docker pull seoyunje/deepclip-preprocess:gpu
+```
+
+## 🏃 Running Docker
+
+```bash
+docker run --gpus all --shm-size=8g --rm -v <DATA_ROOT>:/data -v deepclip-cache:/root/.cache/deepclip -it seoyunje/deepclip-preprocess:gpu
+```
+
+`<DATA_ROOT>` holds the FF++ videos and `csv/FF++_Metadata.csv`. The weights are downloaded to the `deepclip-cache` volume on the first run.
+Set `STEPS` (e.g. `-e STEPS=3,4,5`) to run only some steps, and `*_ARGS` to override a step's arguments (see [preprocess/README.md](preprocess/README.md#steps-and-arguments)).
+
+## 🗂️ Data Preparation
+
+**Preprocessed dataset:** the videos and the preprocessing outputs (crops, boxes, forgery masks,
+`raw_annotation.parquet`, `train_clip_frame_metadata.csv`) are on the Hugging Face Hub as
+[`KoreaPeter/faceforensics-c23-forgery-annotation`](https://huggingface.co/datasets/KoreaPeter/faceforensics-c23-forgery-annotation)
+(gated: agree to the FaceForensics Terms of Use). Download it to skip the preprocessing
+(see [preprocess/README.md](preprocess/README.md#download-from-the-hugging-face-hub)), or customize the steps with
+Docker to build your own version.
+
+To preprocess from scratch, download the FaceForensics++ (c23) videos and csv files from [Kaggle](https://www.kaggle.com/datasets/xdxd003/ff-c23) into `DATA_ROOT`. The pipeline runs 5 steps, writing every output to `DATA_ROOT`:
+
+1. `split_data` - train / test metadata
+2. `detect_original_face` - YOLO face boxes of the real videos, reused for their fakes (pixel-aligned pairs)
+3. `crop_face` - face crops of the real and fake videos
+4. `generate_landmark` - dlib 68 landmarks of the fake crops
+5. `raw_annotation` - SSIM forgery masks, forged regions and artifact flags (`raw_annotation.parquet`, `pair_label`)
+
+Without Docker, run each step with `python -m preprocess.<step> --root-dir DATA_ROOT` after `pip install -r preprocess/requirements.txt`. Details in [preprocess/README.md](preprocess/README.md).
+
 ## 🚀 Training
 
 `train_deepclip.py` and `test_deepclip.py` run against the full repo, not the pip package.
@@ -262,7 +316,7 @@ We recommend **Weights & Biases (W&B)** for experiment tracking (`--wandb-api-ke
 ```python
 !python train_deepclip.py \
     --root-dir DATA_ROOT \
-    --model-name "deepclip_b0" \ # deepclip_b0, deepclip_b5, deepclip_b0_v2, deepclip_b5_v2
+    --model-name "deepclip_b0" \ # deepclip_b0, deepclip_b5, deepclip_b0_v2, deepclip_b5_v2, deepclip_b0_v2_ap, deepclip_b5_v2_ap
     --output-dir "checkpoints" \ # Directory of the best checkpoint
     --seed 2025 \ # for reproducibility
     --wandb-api-key "your-api-key" # Write your own api key
@@ -285,7 +339,7 @@ DATA_ROOT/
 | Argument | Default | Description |
 | -------- | ------- | ----------- |
 | `--root-dir` | (required) | Root directory of the dataset |
-| `--model-name` | `deepclip_b0` | `deepclip_b0`, `deepclip_b5`, `deepclip_b0_v2` or `deepclip_b5_v2` |
+| `--model-name` | `deepclip_b0` | `deepclip_b0`, `deepclip_b5`, `deepclip_b0_v2`, `deepclip_b5_v2`, `deepclip_b0_v2_ap` or `deepclip_b5_v2_ap` |
 | `--config` | `deepclip/config/{model_name}.yaml` | Training recipe (model, LoRA, text sampling, loss, optimizer) |
 | `--output-dir` | `.` | Directory of the best checkpoint |
 | `--seed` | `2025` | Random seed |
@@ -327,7 +381,9 @@ Tested on the FaceForensics++ test set.
 | Model | Test@AUC | Test@Accuracy | Test@Log Loss | Test@Macro F1 |
 | ----- | -------- | ------------- | ------------- | ------------- |
 | ⚡ deepclip_b0 | 0.9917 | 96.33% | 0.0959 | 0.9396 |
-| 🔥 deepclip_b5 | **0.9935** | **98.08%** | **0.0739** | **0.9672** |
+| 🔥 deepclip_b5 | 0.9935 | 98.08% | 0.0739 | 0.9672 |
+| ⚡ deepclip_b0_v2 | 0.9923 | 96.33% | 0.1024 | 0.9394 |
+| 🔥 deepclip_b5_v2 | **0.9960** | **98.25%** | **0.0667** | **0.9702** |
 
 ### Cross-Domain Evaluation
 
@@ -338,14 +394,18 @@ Tested on datasets not seen during training.
 | Model | Test@AUC | Test@Accuracy | Test@Log Loss | Test@Macro F1 |
 | ----- | -------- | ------------- | ------------- | ------------- |
 | ⚡ deepclip_b0 | 0.6821 | 61.97% | 0.8823 | 0.6147 |
-| 🔥 deepclip_b5 | **0.7674** | **74.13%** | **0.7455** | **0.7162** |
+| 🔥 deepclip_b5 | 0.7674 | 74.13% | 0.7455 | **0.7162** |
+| ⚡ deepclip_b0_v2 | 0.7799 | 70.46% | **0.6764** | 0.6930 |
+| 🔥 deepclip_b5_v2 | **0.8010** | **77.80%** | 0.8903 | 0.7154 |
 
 **KoDF**
 
 | Model | Test@AUC | Test@Accuracy | Test@Log Loss | Test@Macro F1 |
 | ----- | -------- | ------------- | ------------- | ------------- |
 | ⚡ deepclip_b0 | 0.7726 | 68.83% | **1.5238** | 0.6791 |
-| 🔥 deepclip_b5 | **0.8277** | **71.75%** | 1.6868 | **0.7072** |
+| 🔥 deepclip_b5 | 0.8277 | 71.75% | 1.6868 | 0.7072 |
+| ⚡ deepclip_b0_v2 | 0.7732 | 67.51% | 2.2001 | 0.6677 |
+| 🔥 deepclip_b5_v2 | **0.8446** | **72.14%** | 2.1616 | **0.7107** |
 
 ## ⚖️ License
 
