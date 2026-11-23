@@ -25,7 +25,7 @@
 
 - [💡 What DeepClip Predicts](#-what-deepclip-predicts) - Fake probability plus 20 artifact scores (4 face regions × 5 artifact types)
 - [🏗️ Architecture](#-architecture) - DeepGuard's MS-Eff-GCViT image encoder aligned with frozen CLIP text embeddings
-- [🧬 Model Zoo](#-model-zoo) - `deepclip_b0`, `deepclip_b5` and their LoRA text encoder versions `deepclip_b0_v2`, `deepclip_b5_v2`
+- [🧬 Model Zoo](#-model-zoo) - `deepclip_b0`, `deepclip_b5`, their LoRA text encoder versions `deepclip_b0_v2`, `deepclip_b5_v2` and the attention pooling versions `deepclip_b0_v2_ap`, `deepclip_b5_v2_ap`
 - [🤗 Try It Live: Hugging Face Spaces](#-try-it-live-hugging-face-spaces) - Upload an image or video to the Hugging Face Space, no install needed
 - [🔮 Predict Image & Video](#-predict-image--video) - Detect deepfakes and their artifacts via the Hugging Face Hub or `deepclip.detect`
 - [🐳 Building Docker Image](#-building-docker-image) - Build or pull the FF++ preprocessing image
@@ -66,6 +66,10 @@ text encoder of **CLIP**.
     (`lora_r`, `lora_alpha`, `lora_drop`) on the q, k, v and out projections of every text attention block, while the
     CLIP weights stay frozen. The 21 captions are embedded by the text encoder at every step, so the caption embeddings
     adapt together with the image encoder.
+  - **Attention pooling (`*_v2_ap`)**: `*_v2` with two changes in the image encoder (**GCViTV2**): the global average
+    pooling of the last feature map is replaced by the **attention pooling of CLIP** (`AttentionPool2d`: a query from
+    the mean token attends to every spatial token), and RMSNorm by **LayerNorm** (`image_norm: layernorm`,
+    `image_pool: attn`). The LoRA rank is raised to r=8 (alpha 16).
 - **(2) Inference**: the similarity to *"a photo of a real face."* gives the fake probability, and the similarity to
   the 20 region–artifact captions gives the artifact map.
 
@@ -77,12 +81,16 @@ text encoder of **CLIP**.
 | 🔥 deepclip_b5 | 384 X 384 | ms_eff_gcvit_b5 | CLIP ViT-L/14 (frozen) | 50.61M | 13.26G | [spec](deepclip/config/deepclip_b5.yaml) |
 | ⚡ deepclip_b0_v2 | 224 X 224 | ms_eff_gcvit_b0 | CLIP ViT-B/16 (LoRA) | 72.44M | 15.18G | [spec](deepclip/config/deepclip_b0_v2.yaml) |
 | 🔥 deepclip_b5_v2 | 384 X 384 | ms_eff_gcvit_b5 | CLIP ViT-L/14 (LoRA) | 174.56M | 45.49G | [spec](deepclip/config/deepclip_b5_v2.yaml) |
+| ⚡ deepclip_b0_v2_ap | 224 X 224 | ms_eff_gcvit_b0 (attn pool) | CLIP ViT-B/16 (LoRA) | 73.07M | 15.27G | [spec](deepclip/config/deepclip_b0_v2_ap.yaml) |
+| 🔥 deepclip_b5_v2_ap | 384 X 384 | ms_eff_gcvit_b5 (attn pool) | CLIP ViT-L/14 (LoRA) | 176.64M | 45.72G | [spec](deepclip/config/deepclip_b5_v2_ap.yaml) |
 
 `deepclip_b0` and `deepclip_b5` don't keep the text encoder: the frozen CLIP text encoder embeds the 21 captions once
 and only the embeddings (`text_table`) are kept, so Params and FLOPs (multiply-accumulates, one image) are of the
 image encoder. `*_v2` keep the whole text encoder with LoRA (r=4: 0.20M for ViT-B/16, 0.29M for ViT-L/14), so Params
 are image + text encoder and FLOPs are one image plus the 21 captions. At inference the caption embeddings are cached,
-so each further image costs only the image encoder (0.83G for b0, 13.26G for b5).
+so each further image costs only the image encoder (0.83G for b0, 13.26G for b5). `*_v2_ap` use LoRA r=8 (0.39M for
+ViT-B/16, 0.59M for ViT-L/14), and the attention pooling adds 0.44M (b0) / 1.78M (b5) parameters to the image encoder,
+so a further image costs 0.84G (b0) / 13.38G (b5).
 
 ## 🤗 Try It Live: Hugging Face Spaces
 
@@ -308,7 +316,7 @@ We recommend **Weights & Biases (W&B)** for experiment tracking (`--wandb-api-ke
 ```python
 !python train_deepclip.py \
     --root-dir DATA_ROOT \
-    --model-name "deepclip_b0" \ # deepclip_b0, deepclip_b5, deepclip_b0_v2, deepclip_b5_v2
+    --model-name "deepclip_b0" \ # deepclip_b0, deepclip_b5, deepclip_b0_v2, deepclip_b5_v2, deepclip_b0_v2_ap, deepclip_b5_v2_ap
     --output-dir "checkpoints" \ # Directory of the best checkpoint
     --seed 2025 \ # for reproducibility
     --wandb-api-key "your-api-key" # Write your own api key
@@ -331,7 +339,7 @@ DATA_ROOT/
 | Argument | Default | Description |
 | -------- | ------- | ----------- |
 | `--root-dir` | (required) | Root directory of the dataset |
-| `--model-name` | `deepclip_b0` | `deepclip_b0`, `deepclip_b5`, `deepclip_b0_v2` or `deepclip_b5_v2` |
+| `--model-name` | `deepclip_b0` | `deepclip_b0`, `deepclip_b5`, `deepclip_b0_v2`, `deepclip_b5_v2`, `deepclip_b0_v2_ap` or `deepclip_b5_v2_ap` |
 | `--config` | `deepclip/config/{model_name}.yaml` | Training recipe (model, LoRA, text sampling, loss, optimizer) |
 | `--output-dir` | `.` | Directory of the best checkpoint |
 | `--seed` | `2025` | Random seed |
